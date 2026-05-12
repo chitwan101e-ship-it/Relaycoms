@@ -6,8 +6,44 @@
   color-scheme: light;
 }
 
+/* Lock horizontal scroll on every screen so a stray wide element never pushes the
+   fixed bottom nav / floating chat button off-viewport on phones. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior-x: contain;
+}
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Inter typography (matches HTML mock). */
+.relay-wordmark {
+  font-family: var(--font-relay-footer), 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+.relay-footer-bar {
+  font-family: var(--font-relay-footer), 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+}
+
 body {
   @apply bg-gray-50 text-gray-900;
+  font-family: var(--font-relay-footer), 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
 }
 
 .otp-input {

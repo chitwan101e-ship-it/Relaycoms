@@ -75,7 +75,7 @@ export default function RelayLogo({ theme = 'dark', size = 'md', showWordmark = 
       {showWordmark ? (
         <span
           className={clsx(
-            'font-extrabold tracking-tight leading-none',
+            'relay-wordmark font-extrabold tracking-tight leading-none',
             s.word,
             isLight ? 'text-slate-900' : 'text-white'
           )}

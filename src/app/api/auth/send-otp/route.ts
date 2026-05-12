@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createServiceClient } from '@/lib/supabase/server'
+import { getClientIp } from '@/lib/clientIp'
+import { rateLimitSendOtp } from '@/lib/authRateLimit'
+import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
 import crypto from 'crypto'
 
 function getResend() {
@@ -17,8 +20,28 @@ function hashToken(token: string) {
 export async function POST(req: NextRequest) {
   try {
     const otpEnabled = process.env.ENABLE_OTP === 'true'
-    const { email } = await req.json()
+    const body = await req.json()
+    const { email, turnstileToken } = body as { email?: string; turnstileToken?: string }
     if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 })
+
+    const ip = getClientIp(req)
+
+    const captcha = await verifyTurnstileToken(turnstileToken, ip)
+    if (!captcha.ok) {
+      return NextResponse.json({ error: captcha.error ?? 'Verification failed' }, { status: 400 })
+    }
+
+    const rl = await rateLimitSendOtp(ip, String(email))
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many verification requests. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(rl.retryAfterSec) },
+        }
+      )
+    }
+
     if (!otpEnabled) return NextResponse.json({ success: true, otpSkipped: true })
 
     // Generate 6-digit OTP
@@ -66,7 +89,27 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true })
   } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
     console.error('[send-otp]', err)
-    return NextResponse.json({ error: 'Failed to send OTP' }, { status: 500 })
+
+    if (message.includes('RESEND_API_KEY is not configured')) {
+      return NextResponse.json(
+        {
+          error: 'OTP email provider is not configured. Set RESEND_API_KEY in .env.local and restart the dev server.',
+        },
+        { status: 500 }
+      )
+    }
+
+    if (message.toLowerCase().includes('domain') || message.toLowerCase().includes('from')) {
+      return NextResponse.json(
+        {
+          error: 'Email sender is not verified in Resend. Check RESEND_FROM_EMAIL and your verified sending domain.',
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ error: 'Failed to send OTP email. Please try again.' }, { status: 500 })
   }
 }

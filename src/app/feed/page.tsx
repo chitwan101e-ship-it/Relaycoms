@@ -1,9 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { markConversationNotificationsRead } from '@/lib/markConversationNotificationsRead'
+import { markStaffMessagesReadForCustomer } from '@/lib/markStaffMessagesReadForCustomer'
+import {
+  countUnreadStaffMessages,
+  loadCustomerChatPreviews,
+  type ChatPreview,
+} from '@/lib/customerMessaging'
 import RelayLogo from '@/components/RelayLogo'
+import { CustomerMobileFooterNav } from '@/components/CustomerMobileFooterNav'
 import clsx from 'clsx'
 import {
   ThumbsUp,
@@ -14,19 +23,21 @@ import {
   Building2,
   ChevronDown,
   ChevronUp,
-  Search,
   Home,
   Users,
   X,
-  ChevronLeft,
   ChevronRight,
   ImagePlus,
+  Check,
+  CheckCheck,
 } from 'lucide-react'
 
 type ProfileRow = {
   id: string
   role: 'customer' | 'business'
   username: string
+  first_name?: string | null
+  avatar_url?: string | null
   account_status?: string
 }
 type BusinessRow = { id: string; name: string; slug: string }
@@ -40,10 +51,11 @@ type AnnouncementRow = {
   business_id: string
   businesses: BizEmbed | BizEmbed[] | null
 }
-type ProfileEmbed = { username: string; first_name: string; last_name: string }
+type ProfileEmbed = { username: string; first_name: string; last_name: string; avatar_url?: string | null }
 type CommentRow = {
   id: string
   announcement_id: string
+  parent_comment_id?: string | null
   body: string
   created_at: string
   user_id: string
@@ -57,15 +69,18 @@ type MessageRow = {
   body: string
   created_at: string
   image_url?: string | null
+  read?: boolean | null
+  read_at?: string | null
 }
 
-type AppearanceMode = 'dark' | 'light' | 'playful'
+type AppearanceMode = 'dark' | 'playful'
 const APPEARANCE_KEY = 'relay-appearance'
 
 function getStoredAppearance(): AppearanceMode {
   if (typeof window === 'undefined') return 'dark'
   const stored = window.localStorage.getItem(APPEARANCE_KEY)
-  if (stored === 'dark' || stored === 'light' || stored === 'playful') return stored
+  if (stored === 'playful') return 'playful'
+  if (stored === 'dark' || stored === 'light') return 'dark'
   return 'dark'
 }
 
@@ -89,6 +104,19 @@ function initials(name: string) {
   return (p[0]?.slice(0, 2) || '?').toUpperCase()
 }
 
+function commentsByParent(comments: CommentRow[]) {
+  const map = new Map<string | null, CommentRow[]>()
+  for (const c of comments) {
+    const k = c.parent_comment_id ?? null
+    if (!map.has(k)) map.set(k, [])
+    map.get(k)!.push(c)
+  }
+  for (const arr of map.values()) {
+    arr.sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
+  }
+  return map
+}
+
 function extFromImageFile(f: File) {
   if (f.type === 'image/png') return 'png'
   if (f.type === 'image/webp') return 'webp'
@@ -98,14 +126,31 @@ function extFromImageFile(f: File) {
 
 function greetingByHour(d = new Date()) {
   const hour = d.getHours()
-  if (hour < 5) return 'Good night'
   if (hour < 12) return 'Good morning'
-  if (hour < 18) return 'Good afternoon'
-  return 'Good evening'
+  if (hour < 17) return 'Good afternoon'
+  if (hour < 22) return 'Good evening'
+  return 'Good night'
+}
+
+function greetingSubtitle(d = new Date()) {
+  const hour = d.getHours()
+  if (hour < 12) return 'Start the day with the latest from your organization.'
+  if (hour < 17) return 'Catch up on announcements and messages in one place.'
+  if (hour < 22) return 'Here is what is new from your team today.'
+  return 'Wind down — your feed and messages are right here when you need them.'
+}
+
+function greetingAccentEmoji(d = new Date()) {
+  const hour = d.getHours()
+  if (hour < 12) return '☀️'
+  if (hour < 17) return '✨'
+  if (hour < 22) return '🌆'
+  return '🌙'
 }
 
 export default function FeedPage() {
   const router = useRouter()
+  const pathname = usePathname()
   // createBrowserClient returns a new instance each call — stabilize so effects don't loop forever
   const supabase = useMemo(() => createClient(), [])
 
@@ -118,6 +163,8 @@ export default function FeedPage() {
   const [openComments, setOpenComments] = useState<Record<string, boolean>>({})
   const [commentDraft, setCommentDraft] = useState<Record<string, string>>({})
   const [busyAnn, setBusyAnn] = useState<string | null>(null)
+  const [replyThreadTarget, setReplyThreadTarget] = useState<{ annId: string; parentId: string } | null>(null)
+  const [replyThreadDraft, setReplyThreadDraft] = useState('')
 
   const [businesses, setBusinesses] = useState<BusinessRow[]>([])
   const [supportBizId, setSupportBizId] = useState<string>('')
@@ -126,18 +173,44 @@ export default function FeedPage() {
   const [supportDraft, setSupportDraft] = useState('')
   const [supportLoading, setSupportLoading] = useState(false)
   const [unreadNotifications, setUnreadNotifications] = useState(0)
+  /** Unread inbound team messages (drives the Messages FAB — delivered, not opened). */
+  const [chatUnreadCount, setChatUnreadCount] = useState(0)
+  const [chatPreviews, setChatPreviews] = useState<Map<string, ChatPreview>>(new Map())
+  const [followedBusinessIds, setFollowedBusinessIds] = useState<string[]>([])
+  const [toast, setToast] = useState<string | null>(null)
   const [supportOpen, setSupportOpen] = useState(false)
   const [supportPanelView, setSupportPanelView] = useState<'list' | 'chat'>('list')
   const [appearance, setAppearance] = useState<AppearanceMode>(() => getStoredAppearance())
   const [greeting, setGreeting] = useState(() => greetingByHour())
+  const [greetingSub, setGreetingSub] = useState(() => greetingSubtitle())
+  const [greetingEmoji, setGreetingEmoji] = useState(() => greetingAccentEmoji())
   const [pendingAttachment, setPendingAttachment] = useState<{
     file: File
     previewUrl: string
   } | null>(null)
   const supportFileInputRef = useRef<HTMLInputElement>(null)
+  const supportMessagesScrollRef = useRef<HTMLDivElement>(null)
+  const supportMessagesEndRef = useRef<HTMLDivElement>(null)
+  /** Ref for feed realtime so the channel is not torn down when follows change. */
+  const followedBusinessIdsRef = useRef<string[]>([])
+  const consumedOpenChatQueryRef = useRef(false)
+  const openPrimarySupportChatRef = useRef<() => Promise<void>>(async () => {})
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg)
+    window.setTimeout(() => setToast(null), 4200)
+  }, [])
 
   const loadAnnouncements = useCallback(
-    async (uid: string) => {
+    async (uid: string, followIds: string[]) => {
+      if (followIds.length === 0) {
+        setAnnouncements([])
+        setLikeRows([])
+        setLikeCounts({})
+        setCommentsByAnn({})
+        return
+      }
+
       const { data: ann, error: annErr } = await supabase
         .from('announcements')
         .select(
@@ -151,6 +224,7 @@ export default function FeedPage() {
           businesses ( id, name, slug )
         `
         )
+        .in('business_id', followIds)
         .order('created_at', { ascending: false })
 
       if (annErr) {
@@ -193,10 +267,11 @@ export default function FeedPage() {
           `
           id,
           announcement_id,
+          parent_comment_id,
           body,
           created_at,
           user_id,
-          profiles ( username, first_name, last_name )
+          profiles ( username, first_name, last_name, avatar_url )
         `
         )
         .in('announcement_id', ids)
@@ -235,6 +310,16 @@ export default function FeedPage() {
     [supabase]
   )
 
+  const refreshMessagingUI = useCallback(
+    async (customerId: string) => {
+      const { count, error: cuErr } = await countUnreadStaffMessages(supabase, customerId)
+      if (!cuErr) setChatUnreadCount(count)
+      const { previews, error: pvErr } = await loadCustomerChatPreviews(supabase, customerId)
+      if (!pvErr) setChatPreviews(previews)
+    },
+    [supabase]
+  )
+
   useEffect(() => {
     let cancelled = false
 
@@ -250,7 +335,7 @@ export default function FeedPage() {
 
       const { data: prof, error: pErr } = await supabase
         .from('profiles')
-        .select('id, role, username, account_status, deleted_at')
+        .select('id, role, username, first_name, avatar_url, account_status, deleted_at')
         .eq('id', session.user.id)
         .single()
 
@@ -293,8 +378,14 @@ export default function FeedPage() {
 
       if (!bErr && biz) setBusinesses(biz as BusinessRow[])
 
-      await loadAnnouncements(session.user.id)
+      const { data: followsRows } = await supabase.from('follows').select('business_id').eq('user_id', session.user.id)
+      const fids = (followsRows || []).map((r) => (r as { business_id: string }).business_id)
+      followedBusinessIdsRef.current = fids
+      setFollowedBusinessIds(fids)
+
+      await loadAnnouncements(session.user.id, fids)
       await loadUnreadNotifications(session.user.id)
+      await refreshMessagingUI(session.user.id)
       if (cancelled) return
       setLoading(false)
     }
@@ -303,21 +394,28 @@ export default function FeedPage() {
     return () => {
       cancelled = true
     }
-  }, [router, supabase, loadAnnouncements, loadUnreadNotifications])
+  }, [router, supabase, loadAnnouncements, loadUnreadNotifications, refreshMessagingUI])
 
   useEffect(() => {
     function onStorage(e: StorageEvent) {
       if (e.key !== APPEARANCE_KEY) return
       const next = e.newValue
-      if (next === 'dark' || next === 'light' || next === 'playful') setAppearance(next)
+      if (next === 'playful') setAppearance('playful')
+      else if (next === 'dark' || next === 'light') setAppearance('dark')
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   useEffect(() => {
-    const id = window.setInterval(() => setGreeting(greetingByHour()), 60_000)
-    setGreeting(greetingByHour())
+    const tick = () => {
+      const now = new Date()
+      setGreeting(greetingByHour(now))
+      setGreetingSub(greetingSubtitle(now))
+      setGreetingEmoji(greetingAccentEmoji(now))
+    }
+    const id = window.setInterval(tick, 60_000)
+    tick()
     return () => window.clearInterval(id)
   }, [])
 
@@ -364,6 +462,7 @@ export default function FeedPage() {
       }
     } catch (e) {
       console.error(e)
+      showToast('Could not update like. Try again.')
     } finally {
       setBusyAnn(null)
     }
@@ -386,10 +485,11 @@ export default function FeedPage() {
           `
           id,
           announcement_id,
+          parent_comment_id,
           body,
           created_at,
           user_id,
-          profiles ( username, first_name, last_name )
+          profiles ( username, first_name, last_name, avatar_url )
         `
         )
         .single()
@@ -403,6 +503,50 @@ export default function FeedPage() {
       setCommentDraft((d) => ({ ...d, [announcementId]: '' }))
     } catch (e) {
       console.error(e)
+      showToast('Could not post comment. Try again.')
+    } finally {
+      setBusyAnn(null)
+    }
+  }
+
+  async function submitCommentReply(announcementId: string, parentCommentId: string) {
+    if (!profile) return
+    const text = replyThreadDraft.trim()
+    if (!text) return
+    setBusyAnn(`cr-${announcementId}`)
+    try {
+      const { data, error } = await supabase
+        .from('comments')
+        .insert({
+          announcement_id: announcementId,
+          user_id: profile.id,
+          body: text,
+          parent_comment_id: parentCommentId,
+        })
+        .select(
+          `
+          id,
+          announcement_id,
+          parent_comment_id,
+          body,
+          created_at,
+          user_id,
+          profiles ( username, first_name, last_name, avatar_url )
+        `
+        )
+        .single()
+
+      if (error) throw error
+      const row = data as CommentRow
+      setCommentsByAnn((prev) => ({
+        ...prev,
+        [announcementId]: [...(prev[announcementId] || []), row],
+      }))
+      setReplyThreadDraft('')
+      setReplyThreadTarget(null)
+    } catch (e) {
+      console.error(e)
+      showToast('Could not post reply. Try again.')
     } finally {
       setBusyAnn(null)
     }
@@ -412,19 +556,91 @@ export default function FeedPage() {
     async (conversationId: string) => {
       const { data: msgs, error: mErr } = await supabase
         .from('messages')
-        .select('id, conversation_id, sender_id, body, created_at, image_url')
+        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
 
       if (mErr) throw mErr
       setMessages((msgs || []) as MessageRow[])
+
+      const { errorMessage: markErr } = await markStaffMessagesReadForCustomer(supabase, conversationId)
+      if (markErr) console.error(markErr)
+
+      const { data: msgs2 } = await supabase
+        .from('messages')
+        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true })
+      if (msgs2) setMessages(msgs2 as MessageRow[])
+
+      const uid = profile?.id
+      if (uid) {
+        void refreshMessagingUI(uid)
+        void loadUnreadNotifications(uid)
+      }
     },
-    [supabase]
+    [supabase, profile?.id, refreshMessagingUI, loadUnreadNotifications]
   )
+
+  /**
+   * Platform / admin chat: env slug, slug/name hints, then first team alphabetically.
+   * Prefer businesses the customer follows so the footer Chat target is not a random global row.
+   */
+  function resolvePrimarySupportBusinessId(): string | null {
+    const list = businesses
+    if (list.length === 0) return null
+
+    const followedSet = new Set(followedBusinessIds)
+    const followedRows = list.filter((b) => followedSet.has(b.id))
+    const pool = followedRows.length > 0 ? followedRows : list
+
+    const pickFirstByName = (rows: BusinessRow[]) =>
+      [...rows].sort((a, b) => a.name.localeCompare(b.name))[0]?.id ?? null
+
+    const envSlug = process.env.NEXT_PUBLIC_PRIMARY_SUPPORT_BUSINESS_SLUG?.trim()
+    if (envSlug) {
+      const hit = pool.find((b) => b.slug.toLowerCase() === envSlug.toLowerCase())
+      if (hit) return hit.id
+    }
+    const slugHints = ['support', 'relay', 'jbcoms', 'admin', 'help']
+    for (const s of slugHints) {
+      const hit = pool.find((b) => b.slug.toLowerCase() === s)
+      if (hit) return hit.id
+    }
+    const byName = pool.find((b) => /support|helpdesk|help\s*desk|relay\s*support/i.test(b.name))
+    if (byName) return byName.id
+    return pickFirstByName(pool)
+  }
+
+  async function openPrimarySupportChat() {
+    if (!profile) return
+    const bid = resolvePrimarySupportBusinessId()
+    if (!bid) {
+      showToast('No team is available to message yet.')
+      setSupportOpen(true)
+      setSupportPanelView('list')
+      return
+    }
+    setSupportOpen(true)
+    await openThreadForBusiness(bid)
+  }
+
+  function closeMessagesPanel() {
+    setSupportOpen(false)
+  }
+
+  function onMessagesEntryClick() {
+    if (supportOpen) {
+      closeMessagesPanel()
+      return
+    }
+    void openPrimarySupportChat()
+  }
 
   async function openThreadForBusiness(businessId: string) {
     if (!profile || !businessId) return
     setSupportBizId(businessId)
+    setSupportPanelView('chat')
     setSupportLoading(true)
     try {
       const { data: existing, error: exErr } = await supabase
@@ -454,7 +670,6 @@ export default function FeedPage() {
       setConversation(conv)
 
       await loadConversationMessages(conv.id)
-      setSupportPanelView('chat')
     } catch (e) {
       console.error(e)
       setConversation(null)
@@ -465,34 +680,86 @@ export default function FeedPage() {
     }
   }
 
+  openPrimarySupportChatRef.current = openPrimarySupportChat
+
   useEffect(() => {
-    if (!profile?.id) return
+    if (loading || !profile?.id) return
+    if (pathname !== '/feed') return
+    if (typeof window === 'undefined') return
+    const sp = new URLSearchParams(window.location.search)
+    if (sp.get('openChat') !== '1') {
+      consumedOpenChatQueryRef.current = false
+      return
+    }
+    if (consumedOpenChatQueryRef.current) return
+    consumedOpenChatQueryRef.current = true
+    sp.delete('openChat')
+    const q = sp.toString()
+    router.replace(q ? `/feed?${q}` : '/feed', { scroll: false })
+    queueMicrotask(() => {
+      void openPrimarySupportChatRef.current()
+    })
+  }, [loading, profile?.id, pathname, router])
+
+  useEffect(() => {
+    followedBusinessIdsRef.current = followedBusinessIds
+  }, [followedBusinessIds])
+
+  useEffect(() => {
+    const customerId = profile?.id
+    if (!customerId) return
 
     let timer: number | null = null
     const queueFeedRefresh = () => {
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
-        if (profile?.id) void loadAnnouncements(profile.id)
+        const fids = followedBusinessIdsRef.current
+        void loadAnnouncements(customerId, fids)
       }, 300)
     }
 
+    let msgDebounce: number | null = null
+    const queueMessagingRefresh = () => {
+      if (msgDebounce) window.clearTimeout(msgDebounce)
+      msgDebounce = window.setTimeout(() => {
+        void refreshMessagingUI(customerId)
+        void loadUnreadNotifications(customerId)
+      }, 350)
+    }
+
     const channel = supabase
-      .channel(`customer-feed-${profile.id}`)
+      .channel(`customer-feed-${customerId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, queueFeedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, queueFeedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, queueFeedRefresh)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${profile.id}` },
-        () => void loadUnreadNotifications(profile.id)
+        { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${customerId}` },
+        () => void loadUnreadNotifications(customerId)
+      )
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, queueMessagingRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, queueMessagingRefresh)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'follows', filter: `user_id=eq.${customerId}` },
+        () => {
+          void (async () => {
+            const { data: fr } = await supabase.from('follows').select('business_id').eq('user_id', customerId)
+            const fids = (fr || []).map((r) => (r as { business_id: string }).business_id)
+            followedBusinessIdsRef.current = fids
+            setFollowedBusinessIds(fids)
+            void loadAnnouncements(customerId, fids)
+          })()
+        }
       )
       .subscribe()
 
     return () => {
       if (timer) window.clearTimeout(timer)
+      if (msgDebounce) window.clearTimeout(msgDebounce)
       void supabase.removeChannel(channel)
     }
-  }, [supabase, profile?.id, loadAnnouncements, loadUnreadNotifications])
+  }, [supabase, profile?.id, loadAnnouncements, loadUnreadNotifications, refreshMessagingUI])
 
   useEffect(() => {
     if (!conversation?.id) return
@@ -500,7 +767,12 @@ export default function FeedPage() {
       .channel(`customer-chat-${conversation.id}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
+        () => void loadConversationMessages(conversation.id)
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
         () => void loadConversationMessages(conversation.id)
       )
       .subscribe()
@@ -509,6 +781,38 @@ export default function FeedPage() {
       void supabase.removeChannel(channel)
     }
   }, [supabase, conversation?.id, loadConversationMessages])
+
+  useEffect(() => {
+    if (!profile?.id || !conversation?.id) return
+    void (async () => {
+      const { errorMessage } = await markConversationNotificationsRead(supabase, profile.id, conversation.id)
+      if (errorMessage) console.error(errorMessage)
+      void loadUnreadNotifications(profile.id)
+    })()
+  }, [profile?.id, conversation?.id, supabase, loadUnreadNotifications])
+
+  useEffect(() => {
+    if (!profile?.id) return
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void loadUnreadNotifications(profile.id)
+        void refreshMessagingUI(profile.id)
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [profile?.id, loadUnreadNotifications, refreshMessagingUI])
+
+  /** Fallback when Realtime is off or flaky — keeps bell / message badges fresh. */
+  useEffect(() => {
+    if (!profile?.id) return
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void loadUnreadNotifications(profile.id)
+      void refreshMessagingUI(profile.id)
+    }, 20_000)
+    return () => window.clearInterval(id)
+  }, [profile?.id, loadUnreadNotifications, refreshMessagingUI])
 
   function clearPendingAttachment() {
     setPendingAttachment((prev) => {
@@ -532,13 +836,15 @@ export default function FeedPage() {
     })
   }
 
-  function toggleSupportPanel() {
-    setSupportOpen((wasOpen) => {
-      if (wasOpen) return false
-      setSupportPanelView('list')
-      return true
-    })
-  }
+  const scrollSupportToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const end = supportMessagesEndRef.current
+    if (end) {
+      end.scrollIntoView({ block: 'end', behavior })
+      return
+    }
+    const el = supportMessagesScrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
 
   useEffect(() => {
     if (supportOpen) return
@@ -548,6 +854,12 @@ export default function FeedPage() {
     })
     setSupportDraft('')
   }, [supportOpen])
+
+  useEffect(() => {
+    if (!supportOpen || supportPanelView !== 'chat' || !conversation?.id) return
+    const raf = window.requestAnimationFrame(() => scrollSupportToLatest('auto'))
+    return () => window.cancelAnimationFrame(raf)
+  }, [supportOpen, supportPanelView, conversation?.id, messages.length, scrollSupportToLatest])
 
   async function sendSupportMessage() {
     if (!profile || !conversation) return
@@ -582,17 +894,20 @@ export default function FeedPage() {
           body,
           image_url: imageUrl,
         })
-        .select('id, conversation_id, sender_id, body, created_at, image_url')
+        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
         .single()
 
       if (error) throw error
       setMessages((prev) => [...prev, data as MessageRow])
       setSupportDraft('')
       clearPendingAttachment()
+      void refreshMessagingUI(profile.id)
     } catch (e) {
       console.error(e)
-      alert(
-        'Could not send. Run supabase/migrations/002_message_images_storage.sql in the Supabase SQL Editor (adds image_url + storage), then try again.'
+      showToast(
+        e instanceof Error && e.message.includes('storage')
+          ? 'Could not upload image. Check storage setup (message-images bucket).'
+          : 'Could not send message. Try again.'
       )
     } finally {
       setSupportLoading(false)
@@ -602,8 +917,31 @@ export default function FeedPage() {
   async function signOut() {
     if (!window.confirm('Are you sure you want to sign out?')) return
     await supabase.auth.signOut()
-    router.replace('/signup')
+    router.replace('/login')
   }
+
+  const sortedBusinesses = useMemo(() => {
+    return [...businesses].sort((a, b) => {
+      const pa = chatPreviews.get(a.id)
+      const pb = chatPreviews.get(b.id)
+      const ta = pa ? new Date(pa.lastAt).getTime() : 0
+      const tb = pb ? new Date(pb.lastAt).getTime() : 0
+      if (tb !== ta) return tb - ta
+      return a.name.localeCompare(b.name)
+    })
+  }, [businesses, chatPreviews])
+
+  const feedSeenIndexes = useMemo(() => {
+    const uid = profile?.id
+    if (!uid || messages.length === 0) return { lastMine: -1, lastOther: -1 }
+    let lastMine = -1
+    let lastOther = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (lastMine < 0 && messages[i].sender_id === uid) lastMine = i
+      if (lastOther < 0 && messages[i].sender_id !== uid) lastOther = i
+    }
+    return { lastMine, lastOther }
+  }, [messages, profile?.id])
 
   if (loading || !profile) {
     return (
@@ -613,10 +951,13 @@ export default function FeedPage() {
     )
   }
 
-  const fbBlue = appearance === 'playful' ? '#a171ff' : appearance === 'light' ? '#6a67ff' : '#8d63ff'
-  const messengerBlue = appearance === 'playful' ? '#7c4dff' : appearance === 'light' ? '#4169e1' : '#0084ff'
-  const messengerBlueDark = appearance === 'playful' ? '#5c36d6' : appearance === 'light' ? '#2d52c9' : '#006edf'
-  const isLight = appearance === 'light'
+  const fbBlue = appearance === 'playful' ? '#a171ff' : '#8d63ff'
+  /** Relay messaging panel — purple gradient (HTML mock), not Messenger blue */
+  const relayChatFrom = appearance === 'playful' ? '#8d63ff' : '#7c5af6'
+  const relayChatTo = '#5a7ff6'
+  const relayChatGradient = `linear-gradient(135deg, ${relayChatFrom}, ${relayChatTo})`
+  /** Light theme removed — keep flag so existing ternaries resolve to dark styling. */
+  const isLight = false
   const isPlayful = appearance === 'playful'
   const pageBg = isLight
     ? 'bg-[radial-gradient(circle_at_top,_#eef2ff_0%,_#f8faff_40%,_#ffffff_100%)] text-slate-900'
@@ -632,24 +973,36 @@ export default function FeedPage() {
   const commentInputText = isLight ? 'text-slate-800 placeholder:text-slate-400' : 'placeholder:text-[#8e99bd]'
 
   return (
-    <div className={`min-h-screen pb-28 ${pageBg}`}>
-      {/* Relay-style top section */}
-      <header className={`sticky top-0 z-40 backdrop-blur-xl border-b ${isLight ? 'bg-white/90 border-slate-200' : 'bg-[#0b1020]/88 border-white/10'}`}>
-        <div className="max-w-7xl mx-auto px-4 pt-3 pb-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <RelayLogo theme={isLight ? 'light' : 'dark'} size="md" />
+    <div className={`min-h-[100dvh] grid grid-rows-[auto_1fr] overflow-hidden ${pageBg}`}>
+      {/* Top nav + greeting — one frosted shell, toolbar / divider / hero for clearer hierarchy */}
+      <header className="relative z-30 pt-3 px-4 min-[900px]:pt-4 min-[900px]:px-5">
+        <div
+          className={`rounded-[20px] border backdrop-blur-xl shadow-[0_24px_70px_-28px_rgba(12,18,56,0.95)] overflow-hidden ${
+            isLight ? 'bg-white/92 border-slate-200' : 'bg-[#0b1228]/90 border-white/[0.09]'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-2.5 min-[900px]:px-4 min-[900px]:pt-3.5">
+            <div className="min-w-0 flex-1 pr-2">
+              <RelayLogo theme={isLight ? 'light' : 'dark'} size="md" className="min-w-0" />
             </div>
-            <div className="flex items-center gap-3">
+            <div
+              className={`flex items-center gap-1.5 shrink-0 rounded-full p-1 ${
+                isLight ? 'bg-slate-100/80 ring-1 ring-slate-200/80' : 'bg-black/20 ring-1 ring-white/[0.07]'
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => router.push('/notifications')}
-                className="relative p-2 rounded-full hover:bg-white/10"
+                className={`relative flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
+                  isLight
+                    ? 'bg-white text-slate-600 border-slate-200/90 hover:bg-slate-50'
+                    : 'bg-white/[0.06] text-[#d8def5] border-white/[0.08] hover:bg-white/[0.11]'
+                }`}
                 aria-label="Notifications"
               >
-                <Bell className="w-5 h-5 text-[#b8c0dc]" />
+                <Bell className="w-[18px] h-[18px]" strokeWidth={2} />
                 {unreadNotifications > 0 ? (
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#8d63ff] text-white text-[10px] font-bold leading-4 text-center">
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#ff3b5c] text-white text-[9px] font-extrabold flex items-center justify-center shadow-[0_2px_8px_rgba(255,59,92,0.45)] ring-2 ring-[#0b1228]">
                     {unreadNotifications > 99 ? '99+' : unreadNotifications}
                   </span>
                 ) : null}
@@ -657,56 +1010,144 @@ export default function FeedPage() {
               <button
                 type="button"
                 onClick={() => router.push('/profile')}
-                className="relative"
+                className="relative flex h-10 w-10 items-center justify-center rounded-full overflow-hidden ring-1 ring-white/15"
                 aria-label="Open profile"
               >
-                <div className="w-10 h-10 rounded-full bg-[#d23a34] text-white flex items-center justify-center text-sm font-bold">
-                  {initials(profile.username)}
-                </div>
-                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#2fd17f] border-2 border-[#0b1020]" />
+                {profile.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={`${profile.username} avatar`}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full bg-[#d23a34] text-white flex items-center justify-center text-xs font-bold">
+                    {initials(profile.username)}
+                  </div>
+                )}
+                <span
+                  className={`pointer-events-none absolute bottom-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-[#2fd17f] ring-[2.5px] ${
+                    isLight ? 'ring-white' : 'ring-[#0b1228]'
+                  }`}
+                />
               </button>
             </div>
           </div>
-          <div className={`max-w-full rounded-2xl border px-4 py-3 ${softPanelBg}`}>
-            <h1 className={`text-2xl sm:text-[2.1rem] leading-tight flex items-center gap-2 ${strongHeadingText}`}>
-              <span className="truncate">{greeting}, {profile.username}</span>
-              <span className="inline-block shrink-0">👋</span>
-            </h1>
-            <p className={`${mutedText} text-sm sm:text-base mt-1`}>Here's what's happening</p>
+
+          <div
+            className={`h-px mx-4 bg-gradient-to-r from-transparent ${isLight ? 'via-slate-300/70' : 'via-white/[0.12]'} to-transparent`}
+            aria-hidden
+          />
+
+          <div className="relative px-4 pt-3.5 pb-4 min-[900px]:px-4 min-[900px]:pb-4">
+            <div
+              className={`pointer-events-none absolute -right-10 -top-6 h-[140px] w-[140px] rounded-full ${
+                isLight ? 'bg-violet-300/20' : 'bg-[radial-gradient(circle,rgba(141,99,255,0.22)_0%,transparent_72%)]'
+              }`}
+              aria-hidden
+            />
+            <div className="relative min-w-0 max-w-[22rem]">
+              <p
+                className={`text-[10px] font-semibold uppercase tracking-[0.12em] leading-snug mb-2 ${
+                  isLight ? 'text-violet-600/90' : 'text-[#8f9ab8]'
+                }`}
+              >
+                {greetingSub}
+              </p>
+              <h1
+                className={`font-extrabold tracking-[-0.03em] leading-[1.12] flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[clamp(1.35rem,4.5vw,1.85rem)] ${strongHeadingText}`}
+              >
+                <span
+                  className={`min-w-0 ${
+                    isLight
+                      ? 'bg-gradient-to-r from-violet-700 via-fuchsia-600 to-sky-600 bg-clip-text text-transparent'
+                      : 'bg-gradient-to-r from-[#ebe4ff] via-white to-[#bfefff] bg-clip-text text-transparent'
+                  }`}
+                >
+                  {greeting}, {profile.first_name?.trim() || profile.username}
+                </span>
+                <span className="inline-flex shrink-0 select-none text-[1.2em] leading-none translate-y-[0.06em]" aria-hidden>
+                  {greetingEmoji}
+                </span>
+              </h1>
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto flex justify-center items-start gap-6 px-2 sm:px-4 pt-5">
-        {/* Left shortcuts — Facebook-style rail */}
-        <aside className={`hidden xl:block w-[280px] shrink-0 space-y-1 sticky top-24 self-start rounded-2xl border p-3 backdrop-blur-xl ${softPanelBg}`}>
-          <div className={`flex items-center gap-3 rounded-xl px-2 py-2 cursor-default ${isLight ? 'hover:bg-slate-100' : 'hover:bg-white/10'}`}>
+      {/* Desktop: 220px rail | scroll feed | 260px aside; mobile: single column */}
+      <div className="min-h-0 overflow-hidden flex flex-col min-[900px]:grid min-[900px]:grid-cols-[220px_minmax(0,1fr)_260px] min-[900px]:gap-4 px-3.5 min-[900px]:px-5 min-[900px]:pb-5">
+        <aside className={`hidden min-[900px]:block min-h-0`}>
+          <div className={`sticky top-3 space-y-0.5 rounded-2xl border p-2.5 ${softPanelBg}`}>
             <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0"
-              style={{ backgroundColor: fbBlue }}
+              className={`flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium cursor-default ${
+                isLight ? 'text-slate-800' : 'text-[#c4cbe6]'
+              }`}
             >
-              {initials(profile.username)}
+              {profile.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt=""
+                  className="w-[30px] h-[30px] rounded-full object-cover border border-white/10 shrink-0"
+                />
+              ) : (
+                <div
+                  className="w-[30px] h-[30px] rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0"
+                  style={{ backgroundColor: fbBlue }}
+                >
+                  {initials(profile.username)}
+                </div>
+              )}
+              <span className="truncate">{profile.username}</span>
             </div>
-            <span className={`font-medium truncate ${isLight ? 'text-slate-800' : 'text-white'}`}>{profile.username}</span>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl bg-[#1a2347] px-2 py-2 text-[#a894ff]">
-            <Home className="w-7 h-7 shrink-0" strokeWidth={2} />
-            <span className="font-medium">Home</span>
-          </div>
-          <div className={`flex items-center gap-3 rounded-xl px-2 py-2 ${isLight ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-white/10 text-[#c4cbe6]'}`}>
-            <Users className="w-7 h-7 shrink-0 text-[#8d63ff]" strokeWidth={2} />
-            <span className="font-medium">Announcements</span>
+            <div
+              className={`flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium ${
+                isLight ? 'bg-violet-100 text-violet-700' : 'bg-[#8d63ff]/12 text-[#8d63ff]'
+              }`}
+            >
+              <Home className="w-7 h-7 shrink-0" strokeWidth={2} />
+              Home
+            </div>
+            <Link
+              href="/notifications"
+              className={`flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium transition-colors ${
+                isLight ? 'text-slate-700 hover:bg-slate-100' : 'text-[#c4cbe6] hover:bg-white/5'
+              }`}
+            >
+              <Bell className="w-7 h-7 shrink-0" strokeWidth={2} />
+              Notifications
+            </Link>
+            <button
+              type="button"
+              onClick={() => document.getElementById('relay-feed-main')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className={`w-full flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] font-medium transition-colors ${
+                isLight ? 'text-slate-700 hover:bg-slate-100' : 'text-[#c4cbe6] hover:bg-white/5'
+              }`}
+            >
+              <Users className="w-7 h-7 shrink-0 text-[#8d63ff]" strokeWidth={2} />
+              Announcements
+            </button>
           </div>
         </aside>
 
-        {/* Center feed — all announcements */}
-        <main className="w-full max-w-[700px] shrink-0 space-y-4 pb-8">
-          {announcements.length === 0 ? (
+        <main
+          id="relay-feed-main"
+          className="min-h-0 flex-1 overflow-y-auto flex flex-col gap-3 pt-2 pb-[calc(4.75rem+env(safe-area-inset-bottom))] min-[900px]:pt-0 min-[900px]:pb-0 scroll-mt-2"
+        >
+          {followedBusinessIds.length === 0 ? (
+            <div className={`rounded-3xl border p-8 sm:p-10 text-center shadow-[0_20px_55px_-35px_rgba(37,58,134,0.9)] ${panelBg}`}>
+              <Building2 className={`w-12 h-12 mx-auto mb-3 ${isLight ? 'text-slate-400' : 'text-[#7f8cb7]'}`} />
+              <p className={`text-lg ${headingText}`}>No team feed yet</p>
+              <p className={`${mutedText} text-sm mt-2 max-w-md mx-auto leading-relaxed`}>
+                Your account is not linked to a team feed. After an admin approves you, you are automatically connected to their
+                announcements. Refresh this page if you were just approved, or sign out and back in.
+              </p>
+            </div>
+          ) : announcements.length === 0 ? (
             <div className={`rounded-3xl border p-10 text-center shadow-[0_20px_55px_-35px_rgba(37,58,134,0.9)] ${panelBg}`}>
               <Building2 className={`w-12 h-12 mx-auto mb-3 ${isLight ? 'text-slate-400' : 'text-[#7f8cb7]'}`} />
               <p className={`text-[15px] ${headingText}`}>No announcements yet</p>
               <p className={`${mutedText} text-sm mt-1`}>
-                When businesses post updates, they will appear here in your feed.
+                When your team publishes an update, it will show up here. You can still use Messages to reach support anytime.
               </p>
             </div>
           ) : (
@@ -717,6 +1158,88 @@ export default function FeedPage() {
               const count = likeCounts[a.id] || 0
               const comments = commentsByAnn[a.id] || []
               const open = openComments[a.id]
+              const byParent = commentsByParent(comments)
+
+              function renderCommentNode(c: CommentRow, depth: number) {
+                const p = one(c.profiles)
+                const who = p ? `${p.first_name} ${p.last_name}`.trim() || p.username : 'Member'
+                const kids = byParent.get(c.id) || []
+                const isReplying = replyThreadTarget?.annId === a.id && replyThreadTarget?.parentId === c.id
+                return (
+                  <li key={c.id} className="flex gap-2 text-sm">
+                    {p?.avatar_url ? (
+                      <img
+                        src={p.avatar_url}
+                        alt={`${who} avatar`}
+                        className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0"
+                      />
+                    ) : (
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                        style={{ backgroundColor: '#606770' }}
+                      >
+                        {p ? initials(`${p.first_name} ${p.last_name}`) : '?'}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={`inline-block max-w-full rounded-2xl px-3 py-2 border ${
+                          isLight ? 'bg-white border-slate-200' : 'bg-[#131d3d] border-white/10'
+                        }`}
+                      >
+                        <span className={`font-semibold ${isLight ? 'text-slate-900' : 'text-white'}`}>{who}</span>
+                        <p className={`mt-0.5 whitespace-pre-wrap ${isLight ? 'text-slate-700' : 'text-[#d4dbf0]'}`}>{c.body}</p>
+                      </div>
+                      <div className="mt-1 ml-1 flex flex-wrap items-center gap-2">
+                        <p className={`text-[11px] ${mutedText}`}>{timeAgo(c.created_at)}</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyThreadTarget((prev) =>
+                              prev?.annId === a.id && prev.parentId === c.id ? null : { annId: a.id, parentId: c.id }
+                            )
+                            setReplyThreadDraft('')
+                          }}
+                          className={`text-[11px] font-semibold ${isLight ? 'text-[#1877f2]' : 'text-[#8d63ff]'}`}
+                        >
+                          Reply
+                        </button>
+                      </div>
+                      {isReplying ? (
+                        <div className="mt-2 flex gap-2 items-center">
+                          <input
+                            value={replyThreadDraft}
+                            onChange={(e) => setReplyThreadDraft(e.target.value)}
+                            placeholder={`Reply to ${who}…`}
+                            className={`flex-1 min-w-0 rounded-xl border px-3 py-2 text-sm outline-none ${isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-[#0f1a38]'} ${commentInputText}`}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault()
+                                void submitCommentReply(a.id, c.id)
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={busyAnn === `cr-${a.id}` || !replyThreadDraft.trim()}
+                            onClick={() => void submitCommentReply(a.id, c.id)}
+                            className="p-2 rounded-full text-white shrink-0 disabled:opacity-50"
+                            style={{ backgroundColor: fbBlue }}
+                            aria-label="Send reply"
+                          >
+                            {busyAnn === `cr-${a.id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      ) : null}
+                      {kids.length > 0 ? (
+                        <ul className={`mt-2 space-y-2 border-l pl-2 ml-1 ${isLight ? 'border-slate-200' : 'border-white/10'}`}>
+                          {kids.map((k) => renderCommentNode(k, depth + 1))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  </li>
+                )
+              }
 
               return (
                 <article
@@ -733,9 +1256,16 @@ export default function FeedPage() {
                         {initials(bizName)}
                       </div>
                       <div className="min-w-0 flex-1 leading-tight">
-                        <div className={`hover:underline cursor-default truncate ${headingText}`}>
-                          {bizName}
-                        </div>
+                        {biz?.slug ? (
+                          <Link
+                            href={`/business/${biz.slug}`}
+                            className={`block truncate hover:underline ${headingText}`}
+                          >
+                            {bizName}
+                          </Link>
+                        ) : (
+                          <div className={`truncate ${headingText}`}>{bizName}</div>
+                        )}
                         <div className={`flex items-center gap-1 text-xs ${mutedText}`}>
                           <span>{timeAgo(a.created_at)}</span>
                           <span>·</span>
@@ -822,31 +1352,7 @@ export default function FeedPage() {
                         <p className={`text-sm ${mutedText} text-center py-2`}>No comments yet.</p>
                       ) : (
                         <ul className="space-y-3">
-                          {comments.map((c) => {
-                            const p = one(c.profiles)
-                            const who = p
-                              ? `${p.first_name} ${p.last_name}`
-                              : 'Member'
-                            return (
-                              <li key={c.id} className="flex gap-2 text-sm">
-                                <div
-                                  className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                                  style={{ backgroundColor: '#606770' }}
-                                >
-                                  {p ? initials(`${p.first_name} ${p.last_name}`) : '?'}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className={`inline-block max-w-full rounded-2xl px-3 py-2 border ${isLight ? 'bg-white border-slate-200' : 'bg-[#131d3d] border-white/10'}`}>
-                                    <span className={`font-semibold ${isLight ? 'text-slate-900' : 'text-white'}`}>{who}</span>
-                                    <p className={`mt-0.5 whitespace-pre-wrap ${isLight ? 'text-slate-700' : 'text-[#d4dbf0]'}`}>{c.body}</p>
-                                  </div>
-                                  <p className={`text-[11px] ${mutedText} mt-0.5 ml-1`}>
-                                    {timeAgo(c.created_at)}
-                                  </p>
-                                </div>
-                              </li>
-                            )
-                          })}
+                          {(byParent.get(null) || []).map((c) => renderCommentNode(c, 0))}
                         </ul>
                       )}
                       <div className={`flex gap-2 items-center rounded-full px-3 py-1.5 border ${isLight ? 'bg-white border-slate-200' : 'bg-[#0f1a38] border-white/10'}`}>
@@ -887,47 +1393,43 @@ export default function FeedPage() {
           )}
         </main>
 
-        {/* Right column — lightweight FB-style */}
-        <aside className="hidden lg:block w-[300px] shrink-0 sticky top-24 self-start">
-          <div className={`rounded-3xl border p-4 shadow-[0_20px_55px_-35px_rgba(37,58,134,0.9)] ${panelBg}`}>
-            <p className="text-xs font-semibold text-[#7f8bad] uppercase tracking-wide mb-2">
-              Tip
+        <aside className="hidden min-[900px]:block min-h-0">
+          <div className={`sticky top-3 rounded-2xl border p-3.5 ${softPanelBg}`}>
+            <p
+              className={`text-[10px] font-bold uppercase tracking-[0.15em] mb-2 ${
+                isLight ? 'text-slate-500' : 'text-[#8892b0]'
+              }`}
+            >
+              Quick tip
             </p>
-            <p className={`text-sm ${bodyText} leading-snug`}>
-              Tap the <strong className="text-[#0084ff]">chat</strong> bubble to open Chats, pick a
-              business, then send text or <strong>photos</strong> like Messenger.
+            <p className={`text-[13px] leading-relaxed ${bodyText}`}>
+              Tap the <strong className={isLight ? 'text-violet-600' : 'text-[#8d63ff]'}>chat</strong> button to open
+              Messages. Pick a business and send text or photos — fast and private.
             </p>
           </div>
         </aside>
       </div>
 
-      {/* Messenger-style floating Chats window */}
+      <CustomerMobileFooterNav
+        unreadNotifications={unreadNotifications}
+        unreadChatCount={chatUnreadCount}
+        isLight={isLight}
+        onChatClick={() => onMessagesEntryClick()}
+        chatActive={supportOpen}
+      />
+
+      {/* Relay messages panel */}
       {supportOpen && (
         <div
-          className="fixed z-50 flex flex-col rounded-2xl shadow-2xl border border-white/15 bg-[#0c1530] overflow-hidden w-[calc(100vw-1rem)] sm:w-[380px] h-[min(85dvh,620px)] max-h-[calc(100dvh-5.5rem)]"
-          style={{ bottom: '5.5rem', right: 'max(0.75rem, env(safe-area-inset-right))' }}
+          className="fixed z-50 flex flex-col rounded-[20px] shadow-2xl border border-[#8d63ff]/30 bg-[#0a1228] overflow-hidden w-[min(340px,calc(100vw-1.75rem))] sm:w-[380px] h-[min(85dvh,620px)] max-h-[min(calc(100dvh-8rem-env(safe-area-inset-bottom)),620px)] min-[900px]:max-h-[calc(100dvh-7rem)] max-[899px]:bottom-[calc(6.5rem+env(safe-area-inset-bottom))] min-[900px]:bottom-24 right-[max(0.875rem,env(safe-area-inset-right))]"
         >
           <div
             className="flex items-center gap-2 px-2 py-2.5 text-white shrink-0 min-h-[52px]"
-            style={{ background: `linear-gradient(135deg, ${messengerBlue} 0%, ${messengerBlueDark} 100%)` }}
+            style={{ background: relayChatGradient }}
           >
-            {supportPanelView === 'chat' && conversation ? (
+            {supportPanelView === 'chat' && (conversation || supportBizId) ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSupportPanelView('list')
-                    setConversation(null)
-                    setMessages([])
-                    clearPendingAttachment()
-                    setSupportDraft('')
-                  }}
-                  className="p-2 rounded-full hover:bg-white/15 shrink-0"
-                  aria-label="Back to chats"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <div className="w-9 h-9 rounded-full bg-white/25 flex items-center justify-center text-xs font-bold shrink-0 border border-white/30">
+                <div className="w-9 h-9 rounded-full bg-white/25 flex items-center justify-center text-xs font-bold shrink-0 border border-white/30 ml-1">
                   {initials(
                     businesses.find((b) => b.id === supportBizId)?.name || 'B'
                   )}
@@ -936,21 +1438,23 @@ export default function FeedPage() {
                   <div className="font-semibold text-sm truncate leading-tight">
                     {businesses.find((b) => b.id === supportBizId)?.name || 'Business'}
                   </div>
-                  <div className="text-[11px] text-white/85">Active now · Customer support</div>
+                  <div className="text-[11px] text-white/85">
+                    {supportLoading && !conversation ? 'Opening…' : 'Relay · live'}
+                  </div>
                 </div>
               </>
             ) : (
               <>
-                <MessageCircle className="w-5 h-5 shrink-0 ml-1" />
+                <MessageCircle className="w-5 h-5 shrink-0 ml-1" strokeWidth={2.5} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-sm">Chats</div>
-                  <div className="text-[11px] text-white/85">Message any business</div>
+                  <div className="font-semibold text-sm">Messages</div>
+                  <div className="text-[11px] text-white/85">Your organization · live</div>
                 </div>
               </>
             )}
             <button
               type="button"
-              onClick={() => toggleSupportPanel()}
+              onClick={() => closeMessagesPanel()}
               className="p-2 rounded-full hover:bg-white/20 shrink-0 ml-auto"
               aria-label="Close"
             >
@@ -961,51 +1465,70 @@ export default function FeedPage() {
           {supportPanelView === 'list' && (
             <div className="flex-1 flex flex-col min-h-0 bg-[#0f1a38]">
               <div className="flex-1 overflow-y-auto">
-                {businesses.length === 0 ? (
+                {sortedBusinesses.length === 0 ? (
                   <p className="p-6 text-center text-sm text-[#7f8bad]">
                     No businesses to message yet.
                   </p>
                 ) : (
-                  businesses.map((b) => (
-                    <button
-                      key={b.id}
-                      type="button"
-                      disabled={supportLoading}
-                      onClick={() => void openThreadForBusiness(b.id)}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/10 border-b border-white/10 text-left transition-colors disabled:opacity-50"
-                    >
-                      <div
-                        className="w-12 h-12 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-                        style={{ backgroundColor: messengerBlue }}
+                  sortedBusinesses.map((b) => {
+                    const pv = chatPreviews.get(b.id)
+                    const line = pv
+                      ? `${pv.lastSenderIsCustomer ? 'You: ' : ''}${pv.lastBody}`
+                      : 'Tap to start messaging'
+                    const unread = pv?.unreadFromTeam ?? 0
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        disabled={supportLoading}
+                        onClick={() => void openThreadForBusiness(b.id)}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/10 border-b border-white/10 text-left transition-colors disabled:opacity-50"
                       >
-                        {initials(b.name)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-[15px] text-white truncate">
-                          {b.name}
+                        <div className="relative shrink-0">
+                          <div
+                            className="w-12 h-12 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                            style={{ background: relayChatGradient }}
+                          >
+                            {initials(b.name)}
+                          </div>
+                          {unread > 0 ? (
+                            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#ff3355] text-white text-[10px] font-extrabold leading-[18px] text-center border-2 border-[#0f1a38]">
+                              {unread > 9 ? '9+' : unread}
+                            </span>
+                          ) : null}
                         </div>
-                        <div className="text-xs text-[#9ba6cb] truncate">@{b.slug}</div>
-                      </div>
-                      {supportLoading && supportBizId === b.id ? (
-                        <Loader2 className="w-5 h-5 animate-spin text-gray-400 shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />
-                      )}
-                    </button>
-                  ))
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-[15px] text-white truncate">{b.name}</div>
+                          <div className="text-xs text-[#9ba6cb] truncate">{line}</div>
+                        </div>
+                        {supportLoading && supportBizId === b.id ? (
+                          <Loader2 className="w-5 h-5 animate-spin text-gray-400 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />
+                        )}
+                      </button>
+                    )
+                  })
                 )}
               </div>
             </div>
           )}
 
-          {supportPanelView === 'chat' && conversation && (
+          {supportPanelView === 'chat' && supportBizId && (
             <div className="flex-1 flex flex-col min-h-0 bg-[#0b132c]">
-              <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+              {supportLoading && !conversation ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 min-h-0">
+                  <Loader2 className="h-9 w-9 animate-spin text-[#8d63ff]" aria-hidden />
+                  <p className="text-sm text-[#9ba6cb]">Opening your messages…</p>
+                </div>
+              ) : conversation ? (
+                <>
+              <div ref={supportMessagesScrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                     <div
                       className="w-14 h-14 rounded-full flex items-center justify-center text-white mb-3"
-                      style={{ backgroundColor: messengerBlue }}
+                      style={{ background: relayChatGradient }}
                     >
                       <MessageCircle className="w-7 h-7" />
                     </div>
@@ -1015,59 +1538,87 @@ export default function FeedPage() {
                     </p>
                   </div>
                 ) : (
-                  messages.map((m) => {
+                  messages.map((m, i) => {
                     const mine = m.sender_id === profile.id
                     const showText = Boolean(m.body?.trim()) && m.body !== '📷'
+                    const isLastMine = mine && i === feedSeenIndexes.lastMine
+                    const isLastOther = !mine && i === feedSeenIndexes.lastOther
                     return (
                       <div
                         key={m.id}
                         className={clsx(
-                          'max-w-[90%] text-sm shadow-sm overflow-hidden',
-                          mine
-                            ? 'ml-auto rounded-2xl rounded-br-md'
-                            : 'mr-auto rounded-2xl rounded-bl-md bg-[#162347] text-white border border-white/10'
+                          'flex flex-col w-fit max-w-[min(92%,22rem)] shrink-0',
+                          mine ? 'ml-auto items-end' : 'mr-auto items-start'
                         )}
-                        style={mine ? { backgroundColor: messengerBlue, color: 'white' } : undefined}
                       >
-                        {m.image_url ? (
-                          <a
-                            href={m.image_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block"
-                          >
-                            <img
-                              src={m.image_url}
-                              alt=""
-                              className={clsx(
-                                'max-w-full max-h-52 w-full object-cover block',
-                                showText ? 'rounded-t-2xl' : 'rounded-2xl'
-                              )}
-                            />
-                          </a>
-                        ) : null}
-                        {showText ? (
-                          <p
-                            className={clsx(
-                              'whitespace-pre-wrap px-3 py-2',
-                              mine ? 'text-white' : 'text-[#e3e8f8]'
-                            )}
-                          >
-                            {m.body}
-                          </p>
-                        ) : null}
-                        <p
+                        <div
                           className={clsx(
-                            'text-[10px] px-3 py-1.5',
-                            mine ? 'text-white/75' : 'text-[#9ca8cf]'
+                            'text-sm shadow-lg overflow-hidden max-w-full ring-1 ring-white/10',
+                            mine
+                              ? 'rounded-2xl rounded-br-md'
+                              : 'rounded-2xl rounded-bl-md bg-[#13213d] text-white border border-[#8d63ff]/20'
+                          )}
+                          style={mine ? { background: relayChatGradient, color: 'white' } : undefined}
+                        >
+                          {m.image_url ? (
+                            <a
+                              href={m.image_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block"
+                            >
+                              <img
+                                src={m.image_url}
+                                alt="Attachment"
+                                className={clsx(
+                                  'max-w-full max-h-52 w-full object-cover block',
+                                  showText ? 'rounded-t-2xl' : 'rounded-2xl'
+                                )}
+                              />
+                            </a>
+                          ) : null}
+                          {showText ? (
+                            <p
+                              className={clsx(
+                                'whitespace-pre-wrap break-words px-3 py-2.5',
+                                mine ? 'text-white' : 'text-[#e3e8f8]'
+                              )}
+                            >
+                              {m.body}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div
+                          className={clsx(
+                            'mt-1 flex max-w-full items-center gap-2 px-0.5 text-[11px]',
+                            mine ? 'justify-end text-right' : 'justify-start'
                           )}
                         >
-                          {timeAgo(m.created_at)}
-                        </p>
+                          <span className="text-[#7f8bad] tabular-nums">{timeAgo(m.created_at)}</span>
+                          {mine && isLastMine ? (
+                            <span className="inline-flex items-center gap-1 font-semibold text-violet-100/95">
+                              {m.read && m.read_at ? (
+                                <>
+                                  <CheckCheck className="w-4 h-4 shrink-0 drop-shadow-sm" aria-hidden />
+                                  <span>Read · {timeAgo(m.read_at)}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4 shrink-0 text-white/50" aria-hidden />
+                                  <span className="text-white/70">Delivered</span>
+                                </>
+                              )}
+                            </span>
+                          ) : null}
+                          {!mine && isLastOther && m.read && m.read_at ? (
+                            <span className="text-[#6b7aad]">Opened · {timeAgo(m.read_at)}</span>
+                          ) : null}
+                        </div>
                       </div>
                     )
                   })
                 )}
+                <div ref={supportMessagesEndRef} className="h-px w-full" aria-hidden />
               </div>
 
               <input
@@ -1101,7 +1652,10 @@ export default function FeedPage() {
                   <button
                     type="button"
                     onClick={() => supportFileInputRef.current?.click()}
-                    className="p-2.5 rounded-full text-[#0084ff] hover:bg-white/10 shrink-0"
+                    className={clsx(
+                      'p-2.5 rounded-full hover:bg-white/10 shrink-0',
+                      isLight ? 'text-violet-600' : 'text-[#b8a6ff]'
+                    )}
                     aria-label="Attach photo"
                   >
                     <ImagePlus className="w-6 h-6" strokeWidth={1.75} />
@@ -1128,7 +1682,7 @@ export default function FeedPage() {
                     }
                     onClick={() => void sendSupportMessage()}
                     className="p-2.5 rounded-full text-white shrink-0 disabled:opacity-40 disabled:pointer-events-none"
-                    style={{ backgroundColor: messengerBlue }}
+                    style={{ background: relayChatGradient }}
                     aria-label="Send"
                   >
                     {supportLoading ? (
@@ -1139,38 +1693,67 @@ export default function FeedPage() {
                   </button>
                 </div>
               </div>
+                </>
+              ) : null}
             </div>
           )}
         </div>
       )}
 
-      {/* FAB — Messenger-style */}
-      <button
-        type="button"
-        onClick={() => toggleSupportPanel()}
-        className="fixed z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105 active:scale-95"
-        style={{
-          bottom: 'max(1.25rem, env(safe-area-inset-bottom))',
-          right: 'max(1.25rem, env(safe-area-inset-right))',
-          background: `linear-gradient(135deg, ${messengerBlue} 0%, ${messengerBlueDark} 100%)`,
-        }}
-        aria-label={supportOpen ? 'Close support chat' : 'Open customer support chat'}
-        aria-expanded={supportOpen}
-      >
-        {!supportOpen ? <span className="absolute inset-0 rounded-full border border-white/40 animate-pulse" /> : null}
-        {supportOpen ? (
-          <X className="w-7 h-7" />
-        ) : (
-          <>
-            <MessageCircle className="w-7 h-7" strokeWidth={2} />
-            {unreadNotifications > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-white text-[#213572] text-[10px] font-extrabold leading-[18px] text-center">
-                {unreadNotifications > 9 ? '9+' : unreadNotifications}
-              </span>
-            ) : null}
-          </>
-        )}
-      </button>
+      {/* Primary messaging entry — matched to HTML mock FAB */}
+      <div className="fixed z-50 flex flex-col items-end gap-1.5 right-[max(14px,env(safe-area-inset-right))] max-[899px]:bottom-[calc(5.75rem+env(safe-area-inset-bottom))] min-[900px]:bottom-4">
+        {chatUnreadCount > 0 && !supportOpen ? (
+          <span className="max-w-[calc(100vw-2rem)] truncate rounded-full bg-[#ff3b5c] px-[11px] py-[5px] text-[10px] font-bold text-white shadow-[0_4px_14px_rgba(255,59,92,0.5)] animate-pulse">
+            New team message
+          </span>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => onMessagesEntryClick()}
+          className="group relative flex h-[58px] w-[58px] items-center justify-center rounded-full text-white transition-transform duration-200 hover:scale-[1.06] hover:-translate-y-0.5 active:scale-[0.97]"
+          style={{
+            background: 'linear-gradient(135deg, #7c5af6, #5a7ff6)',
+            boxShadow: '0 8px 28px -6px rgba(124,90,246,0.7)',
+          }}
+          aria-label={supportOpen ? 'Close messages' : 'Open messages'}
+          aria-expanded={supportOpen}
+        >
+          {supportOpen ? (
+            <X className="w-8 h-8" strokeWidth={2.5} />
+          ) : (
+            <>
+              <svg
+                width="30"
+                height="30"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+                className="select-none pointer-events-none transition-transform duration-200 ease-out group-hover:scale-[1.06] group-hover:-translate-y-0.5"
+              >
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              {chatUnreadCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-[#050814] bg-[#ff3b5c] px-1 text-[9px] font-extrabold leading-none text-white">
+                  {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                </span>
+              ) : null}
+            </>
+          )}
+        </button>
+      </div>
+
+      {toast ? (
+        <div
+          role="status"
+          className="fixed left-1/2 z-[60] max-w-sm -translate-x-1/2 rounded-xl border border-white/15 bg-[#11172a] px-4 py-3 text-center text-sm text-white shadow-2xl max-[899px]:bottom-[calc(6.75rem+env(safe-area-inset-bottom))] min-[900px]:bottom-28"
+        >
+          {toast}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -10,8 +10,11 @@
     "seed:admin": "node scripts/seed-admin.mjs"
   },
   "dependencies": {
+    "@marsidev/react-turnstile": "^1.5.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.4",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.37.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.510.0",
     "next": "^15.3.2",

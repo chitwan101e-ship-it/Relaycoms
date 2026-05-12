@@ -38,6 +38,8 @@ create table public.profiles (
   first_name    text not null,
   last_name     text not null,
   phone         text,
+  phone_normalized text,
+  referral_username text,
   avatar_url    text,
   role          public.user_role not null default 'customer',
   -- business-specific (null for customers)
@@ -57,6 +59,29 @@ create table public.profiles (
 create index idx_profiles_business on public.profiles(business_id);
 create index idx_profiles_username  on public.profiles(username);
 create index idx_profiles_status    on public.profiles(account_status);
+
+create unique index idx_profiles_phone_norm_active
+  on public.profiles (phone_normalized)
+  where phone_normalized is not null
+    and deleted_at is null
+    and account_status in ('pending', 'approved', 'suspended', 'blocked');
+
+create table if not exists public.signup_phone_attempts (
+  id uuid primary key default gen_random_uuid(),
+  phone_normalized text,
+  attempted_email text,
+  attempted_username text,
+  blocked boolean not null default false,
+  block_reason text,
+  client_ip text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+
+create index idx_signup_phone_attempts_phone_created
+  on public.signup_phone_attempts (phone_normalized, created_at desc);
+
+alter table public.signup_phone_attempts enable row level security;
 
 -- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 -- 3. OTP TOKENS  (for email verification via Resend)
@@ -111,11 +136,39 @@ create table public.comments (
   id              uuid primary key default uuid_generate_v4(),
   announcement_id uuid not null references public.announcements(id) on delete cascade,
   user_id         uuid not null references public.profiles(id) on delete cascade,
+  parent_comment_id uuid references public.comments(id) on delete cascade,
   body            text not null,
   created_at      timestamptz default now()
 );
 
 create index idx_comments_announcement on public.comments(announcement_id);
+create index idx_comments_parent on public.comments(parent_comment_id) where parent_comment_id is not null;
+
+create or replace function public.comments_validate_parent()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.parent_comment_id is null then
+    return new;
+  end if;
+  if not exists (
+    select 1
+    from public.comments p
+    where p.id = new.parent_comment_id
+      and p.announcement_id = new.announcement_id
+  ) then
+    raise exception 'parent comment must belong to the same announcement';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger comments_validate_parent
+  before insert or update of parent_comment_id, announcement_id on public.comments
+  for each row
+  execute function public.comments_validate_parent();
+
 
 -- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 -- 7. CONVERSATIONS
@@ -150,9 +203,119 @@ create table public.messages (
 create index idx_messages_conversation on public.messages(conversation_id);
 create index idx_messages_created      on public.messages(created_at asc);
 
+-- 8b. INBOX LABELS (staff; matches migration 013_inbox_conversation_labels.sql)
+create table public.inbox_label_definitions (
+  id uuid primary key default uuid_generate_v4(),
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  name text not null,
+  color text,
+  is_system boolean not null default false,
+  preset_key text,
+  created_at timestamptz not null default now(),
+  constraint inbox_label_name_nonempty check (char_length(trim(name)) between 1 and 48)
+);
+
+create unique index inbox_label_defs_business_name_lower
+  on public.inbox_label_definitions (business_id, lower(trim(name)));
+
+create unique index inbox_label_defs_business_preset
+  on public.inbox_label_definitions (business_id, preset_key)
+  where preset_key is not null;
+
+create index idx_inbox_label_defs_business on public.inbox_label_definitions (business_id);
+
+create table public.conversation_inbox_labels (
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  label_id uuid not null references public.inbox_label_definitions(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (conversation_id, label_id)
+);
+
+create index idx_conversation_inbox_labels_label on public.conversation_inbox_labels (label_id);
+
+create or replace function public.conversation_inbox_labels_same_business()
+returns trigger
+language plpgsql
+as $$
+declare
+  conv_bid uuid;
+  lbl_bid uuid;
+begin
+  select c.business_id into conv_bid from public.conversations c where c.id = new.conversation_id;
+  select d.business_id into lbl_bid from public.inbox_label_definitions d where d.id = new.label_id;
+  if conv_bid is null then
+    raise exception 'conversation not found';
+  end if;
+  if lbl_bid is null then
+    raise exception 'label not found';
+  end if;
+  if conv_bid <> lbl_bid then
+    raise exception 'label and conversation must belong to the same business';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger conversation_inbox_labels_same_business
+  before insert or update of conversation_id, label_id on public.conversation_inbox_labels
+  for each row
+  execute function public.conversation_inbox_labels_same_business();
+
+create or replace function public.seed_inbox_preset_labels_for_business()
+returns trigger
+language plpgsql
+as $$
+begin
+  insert into public.inbox_label_definitions (business_id, name, color, is_system, preset_key)
+  select new.id, x.name, x.color, true, x.preset_key
+  from (
+    values
+      ('vip', 'VIP', '#ca8a04'),
+      ('priority', 'Priority', '#ea580c'),
+      ('scammer', 'Scammer', '#dc2626'),
+      ('follow_up', 'Follow up', '#2563eb')
+  ) as x(preset_key, name, color)
+  where not exists (
+    select 1 from public.inbox_label_definitions d
+    where d.business_id = new.id and d.preset_key = x.preset_key
+  );
+  return new;
+end;
+$$;
+
+insert into public.inbox_label_definitions (business_id, name, color, is_system, preset_key)
+select b.id, x.name, x.color, true, x.preset_key
+from public.businesses b
+cross join (
+  values
+    ('vip', 'VIP', '#ca8a04'),
+    ('priority', 'Priority', '#ea580c'),
+    ('scammer', 'Scammer', '#dc2626'),
+    ('follow_up', 'Follow up', '#2563eb')
+) as x(preset_key, name, color)
+where not exists (
+  select 1 from public.inbox_label_definitions d
+  where d.business_id = b.id and d.preset_key = x.preset_key
+);
+
 -- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 -- 9. FOLLOWS
 -- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- 8c. INBOX CANNED REPLIES (matches migration 014_inbox_canned_replies.sql)
+create table public.inbox_canned_replies (
+  id uuid primary key default uuid_generate_v4(),
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  title text not null,
+  body text not null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint inbox_canned_title_len check (char_length(trim(title)) between 1 and 100),
+  constraint inbox_canned_body_len check (char_length(body) between 1 and 8000)
+);
+
+create index idx_inbox_canned_replies_business on public.inbox_canned_replies (business_id, sort_order, title);
+
 create table public.follows (
   user_id     uuid not null references public.profiles(id) on delete cascade,
   business_id uuid not null references public.businesses(id) on delete cascade,
@@ -298,6 +461,9 @@ alter table public.reactions      enable row level security;
 alter table public.comments       enable row level security;
 alter table public.conversations  enable row level security;
 alter table public.messages       enable row level security;
+alter table public.inbox_label_definitions enable row level security;
+alter table public.conversation_inbox_labels enable row level security;
+alter table public.inbox_canned_replies enable row level security;
 alter table public.follows        enable row level security;
 alter table public.admin_reports  enable row level security;
 alter table public.moderation_suspension_events enable row level security;
@@ -354,6 +520,80 @@ create policy "msg_update_business_member"
     )
   );
 
+create policy "inbox_label_defs_select"
+  on public.inbox_label_definitions for select
+  using (public.is_business_member(business_id));
+
+create policy "inbox_label_defs_insert"
+  on public.inbox_label_definitions for insert
+  with check (
+    public.is_business_member(business_id)
+    and is_system = false
+    and preset_key is null
+  );
+
+create policy "inbox_label_defs_update"
+  on public.inbox_label_definitions for update
+  using (public.is_business_member(business_id) and is_system = false)
+  with check (public.is_business_member(business_id) and is_system = false and preset_key is null);
+
+create policy "inbox_label_defs_delete"
+  on public.inbox_label_definitions for delete
+  using (public.is_business_member(business_id) and is_system = false);
+
+create policy "conversation_inbox_labels_select"
+  on public.conversation_inbox_labels for select
+  using (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_inbox_labels.conversation_id
+        and public.is_business_member(c.business_id)
+    )
+  );
+
+create policy "conversation_inbox_labels_insert"
+  on public.conversation_inbox_labels for insert
+  with check (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_inbox_labels.conversation_id
+        and public.is_business_member(c.business_id)
+    )
+    and exists (
+      select 1 from public.inbox_label_definitions d
+      where d.id = conversation_inbox_labels.label_id
+        and public.is_business_member(d.business_id)
+    )
+  );
+
+create policy "conversation_inbox_labels_delete"
+  on public.conversation_inbox_labels for delete
+  using (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_inbox_labels.conversation_id
+        and public.is_business_member(c.business_id)
+    )
+  );
+
+create policy "inbox_canned_replies_select"
+  on public.inbox_canned_replies for select
+  using (public.is_business_member(business_id));
+
+create policy "inbox_canned_replies_insert"
+  on public.inbox_canned_replies for insert
+  with check (public.is_business_member(business_id));
+
+create policy "inbox_canned_replies_update"
+  on public.inbox_canned_replies for update
+  using (public.is_business_member(business_id))
+  with check (public.is_business_member(business_id));
+
+create policy "inbox_canned_replies_delete"
+  on public.inbox_canned_replies for delete
+  using (public.is_business_member(business_id));
+
+
 create policy "follows_read"      on public.follows for select using (true);
 create policy "follows_own"       on public.follows for all    using (user_id = auth.uid());
 
@@ -386,8 +626,17 @@ create trigger set_conversations_updated_at
   before update on public.conversations
   for each row execute function public.set_updated_at();
 
+create trigger businesses_seed_inbox_labels
+  after insert on public.businesses
+  for each row
+  execute function public.seed_inbox_preset_labels_for_business();
+
 create trigger set_admin_reports_updated_at
   before update on public.admin_reports
+  for each row execute function public.set_updated_at();
+
+create trigger set_inbox_canned_replies_updated_at
+  before update on public.inbox_canned_replies
   for each row execute function public.set_updated_at();
 
 -- ────────────────────────────────────────────────────────────
@@ -402,4 +651,6 @@ create trigger set_admin_reports_updated_at
 -- Your database still has tables from an earlier run. In SQL Editor, run once:
 --   supabase/migrations/000_reset_app_schema.sql
 -- Then run this schema again, then 002_message_images_storage.sql, 003_notifications.sql,
--- 004_deleted_users_touch_inbox.sql, 005_suspension_patch_for_existing_db.sql, and 006_messages_staff_mark_read.sql as needed.
+-- 004_deleted_users_touch_inbox.sql, 005_suspension_patch_for_existing_db.sql, 006_messages_staff_mark_read.sql,
+-- 007_profile_images_storage.sql, 008_comments_threading.sql, 009_message_notifications.sql,
+-- 010_mark_customer_messages_read_rpc.sql, 011_message_read_at.sql, 013_inbox_conversation_labels.sql, 014_inbox_canned_replies.sql as needed.

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { notifyBusinessTeamAdmins } from '@/lib/notifyStaffAdmins'
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
 
     const { data: staff, error: staffErr } = await supabase
       .from('profiles')
-      .select('id, role, business_role')
+      .select('id, role, business_role, business_id')
       .eq('id', user.id)
       .single()
 
@@ -39,13 +40,16 @@ export async function POST(req: NextRequest) {
     const admin = createServiceClient()
     const { data: target, error: targetErr } = await admin
       .from('profiles')
-      .select('id, role')
+      .select('id, role, first_name, last_name, username, phone, referral_username')
       .eq('id', targetUserId)
       .single()
 
     if (targetErr || !target || target.role !== 'customer') {
       return NextResponse.json({ error: 'Target must be a customer profile.' }, { status: 400 })
     }
+
+    const { data: authUser } = await admin.auth.admin.getUserById(targetUserId)
+    const email = authUser.user?.email ?? '—'
 
     const nextStatus =
       decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'blocked'
@@ -58,6 +62,42 @@ export async function POST(req: NextRequest) {
 
     if (updErr) {
       return NextResponse.json({ error: updErr.message }, { status: 500 })
+    }
+
+    const t = target as {
+      first_name: string
+      last_name: string
+      username: string
+      phone: string | null
+      referral_username: string | null
+    }
+    const name = `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() || t.username
+    const actionWord = decision === 'approve' ? 'Approved' : decision === 'reject' ? 'Rejected' : 'Blocked'
+    const phoneLine = t.phone?.trim() ? `Phone: ${t.phone.trim()}` : 'Phone: —'
+    const refLine = t.referral_username ? `Referral: @${t.referral_username}` : 'Referral: —'
+    await notifyBusinessTeamAdmins(
+      admin,
+      staff.business_id as string,
+      {
+        title: `Customer ${decision}`,
+        body: `${actionWord} ${name} (@${t.username}, ${email}). ${phoneLine}. ${refLine}.`,
+        link: '/notifications',
+      },
+      { excludeUserId: user.id }
+    )
+
+    // Approved customers automatically follow this business (feed + messaging without a manual Follow step).
+    if (decision === 'approve') {
+      const bid = staff.business_id as string | null
+      if (bid) {
+        const { error: fErr } = await admin.from('follows').insert({
+          user_id: targetUserId,
+          business_id: bid,
+        })
+        if (fErr && fErr.code !== '23505') {
+          console.error('[review-account] follow insert:', fErr)
+        }
+      }
     }
 
     return NextResponse.json({ ok: true, account_status: nextStatus })

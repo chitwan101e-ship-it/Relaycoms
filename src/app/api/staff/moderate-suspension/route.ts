@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { notifyBusinessTeamAdmins } from '@/lib/notifyStaffAdmins'
 
 /**
  * Suspend or unsuspend a customer (account_status = suspended | approved).
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
 
     const { data: target, error: targetErr } = await admin
       .from('profiles')
-      .select('id, role, account_status')
+      .select('id, role, account_status, first_name, last_name, username, phone, referral_username')
       .eq('id', targetUserId)
       .single()
 
@@ -71,6 +72,30 @@ export async function POST(req: NextRequest) {
     if (updErr) {
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
+
+    const { data: authUser } = await admin.auth.admin.getUserById(targetUserId)
+    const email = authUser.user?.email ?? '—'
+    const t = target as {
+      first_name: string
+      last_name: string
+      username: string
+      phone: string | null
+      referral_username: string | null
+    }
+    const name = `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() || t.username
+    const phoneLine = t.phone?.trim() ? `Phone: ${t.phone.trim()}` : 'Phone: —'
+    const refLine = t.referral_username ? `Referral: @${t.referral_username}` : 'Referral: —'
+    const verb = action === 'suspend' ? 'Suspended' : 'Unsuspended'
+    await notifyBusinessTeamAdmins(
+      admin,
+      staff.business_id as string,
+      {
+        title: `Customer ${action === 'suspend' ? 'suspended' : 'unsuspended'}`,
+        body: `${verb} ${name} (@${t.username}, ${email}). ${phoneLine}. ${refLine}.${reason ? ` Reason: ${reason}` : ''}`,
+        link: '/notifications',
+      },
+      { excludeUserId: user.id }
+    )
 
     const { error: logErr } = await admin.from('moderation_suspension_events').insert({
       profile_id: targetUserId,

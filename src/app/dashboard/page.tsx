@@ -1,23 +1,34 @@
 ﻿'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, ComponentType } from 'react'
+import type { ChangeEvent, ComponentType, CSSProperties, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { markConversationNotificationsRead } from '@/lib/markConversationNotificationsRead'
+import { downscaleImageFileToJpeg } from '@/lib/downscaleImageFile'
 import RelayLogo from '@/components/RelayLogo'
+import { RelayChatBubbleIcon } from '@/components/RelayChatBubbleIcon'
 import {
   ArrowLeft,
+  Bell,
+  Camera,
+  Check,
   ClipboardList,
   ImagePlus,
   Inbox,
   Loader2,
   LogOut,
   Megaphone,
-  MessageCircle,
+  MoreHorizontal,
   RefreshCw,
+  Search,
   Send,
   Shield,
+  Tag,
+  BookMarked,
+  Pencil,
   Ban,
+  Trash2,
   ThumbsUp,
   UserCheck,
   User2,
@@ -26,13 +37,29 @@ import {
 } from 'lucide-react'
 
 type AppTab = 'home' | 'post' | 'inbox' | 'users' | 'notify' | 'reports'
+type UsersPanelTab = 'pending' | 'active' | 'suspended'
 
 type ProfileRow = {
   id: string
   role: 'customer' | 'business'
   username: string
+  avatar_url?: string | null
   business_id: string | null
   business_role: 'admin' | 'support' | null
+}
+
+type InboxLabelRow = {
+  id: string
+  name: string
+  color: string | null
+  is_system: boolean
+}
+
+type CannedReplyRow = {
+  id: string
+  title: string
+  body: string
+  sort_order: number
 }
 
 type ConvoListItem = {
@@ -40,9 +67,11 @@ type ConvoListItem = {
   customer_id: string
   customerName: string
   customerUsername: string
+  customerAvatar?: string | null
   preview: string
   updated_at: string
   unreadCount: number
+  labels: InboxLabelRow[]
 }
 
 type ThreadMessage = {
@@ -51,6 +80,8 @@ type ThreadMessage = {
   body: string
   created_at: string
   image_url?: string | null
+  read?: boolean | null
+  read_at?: string | null
 }
 
 type PendingCustomer = {
@@ -58,8 +89,12 @@ type PendingCustomer = {
   first_name: string
   last_name: string
   username: string
+  phone: string | null
+  referral_username: string | null
   created_at: string
   account_status: string
+  email: string | null
+  email_verified: boolean
 }
 
 type ActiveMember = {
@@ -86,11 +121,89 @@ type OwnAnnouncementRow = {
   created_at: string
 }
 
+type BasicProfile = {
+  id: string
+  username: string
+  first_name: string | null
+  last_name: string | null
+  avatar_url?: string | null
+}
+
+type CommentPreview = {
+  id: string
+  body: string
+  created_at: string
+  userName: string
+  userAvatar: string | null
+}
+
+type EngagementComment = {
+  id: string
+  user_id: string
+  parent_comment_id: string | null
+  body: string
+  created_at: string
+  userName: string
+  userAvatar: string | null
+}
+
+function engagementCommentsByParent(list: EngagementComment[]) {
+  const m = new Map<string | null, EngagementComment[]>()
+  for (const c of list) {
+    const k = c.parent_comment_id
+    if (!m.has(k)) m.set(k, [])
+    m.get(k)!.push(c)
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
+  }
+  return m
+}
+
 function extFromImageFile(f: File) {
   if (f.type === 'image/png') return 'png'
   if (f.type === 'image/webp') return 'webp'
   if (f.type === 'image/gif') return 'gif'
   return 'jpg'
+}
+
+type SupabaseBrowserClient = ReturnType<typeof createClient>
+
+/** Prefer DB RPC (migration 010); fall back to PATCH if RPC is not deployed yet. */
+async function markCustomerMessagesReadForStaff(
+  supabase: SupabaseBrowserClient,
+  conversationId: string,
+  customerId: string
+): Promise<{ errorMessage: string | null }> {
+  const { error: rpcErr } = await supabase.rpc('mark_customer_messages_read_for_staff', {
+    p_conversation_id: conversationId,
+  })
+  if (!rpcErr) return { errorMessage: null }
+
+  const msg = rpcErr.message || ''
+  const missingRpc =
+    rpcErr.code === 'PGRST202' ||
+    rpcErr.code === '42883' ||
+    /does not exist|schema cache|Could not find the function/i.test(msg)
+
+  if (!missingRpc) return { errorMessage: msg }
+
+  const now = new Date().toISOString()
+  const base = () =>
+    supabase
+      .from('messages')
+      .update({ read: true, read_at: now })
+      .eq('conversation_id', conversationId)
+      .eq('sender_id', customerId)
+  const { error: e1 } = await base().eq('read', false)
+  if (e1) return { errorMessage: e1.message }
+  const { error: e2 } = await base().is('read', null)
+  if (e2)   return { errorMessage: e2.message }
+  return { errorMessage: null }
+}
+
+function InboxTabIcon({ className }: { className?: string }) {
+  return <RelayChatBubbleIcon className={className} size={16} strokeWidth={2} />
 }
 
 const NAV_DEF: {
@@ -101,7 +214,7 @@ const NAV_DEF: {
 }[] = [
   { id: 'home', label: 'Home', icon: Shield },
   { id: 'post', label: 'Post', adminOnly: true, icon: Megaphone },
-  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'inbox', label: 'Inbox', icon: InboxTabIcon },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'notify', label: 'Notify', icon: Send },
   { id: 'reports', label: 'Reports', icon: ClipboardList },
@@ -116,6 +229,34 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleDateString()
 }
 
+function inboxLabelChipStyle(color: string | null): CSSProperties {
+  const c = color && /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#64748b'
+  return {
+    borderColor: `${c}99`,
+    color: c,
+    backgroundColor: `${c}18`,
+  }
+}
+
+/** Placeholders: {customer_name}, {username}, {business} */
+function expandCannedReplyBody(
+  template: string,
+  ctx: { customerName: string; customerUsername: string; businessName: string }
+) {
+  return template
+    .replaceAll('{customer_name}', ctx.customerName)
+    .replaceAll('{username}', ctx.customerUsername)
+    .replaceAll('{business}', ctx.businessName)
+}
+
+function mergeCannedIntoDraft(draft: string, chunk: string) {
+  const c = chunk.trim()
+  if (!c) return draft
+  const d = draft.trimEnd()
+  if (!d) return c
+  return `${d}\n\n${c}`
+}
+
 export default function DashboardPage() {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
@@ -123,13 +264,20 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [activeTab, setActiveTab] = useState<AppTab>('home')
+  const activeTabRef = useRef<AppTab>('home')
+  activeTabRef.current = activeTab
 
   const [convoList, setConvoList] = useState<ConvoListItem[]>([])
+  const convoListRef = useRef<ConvoListItem[]>([])
+  convoListRef.current = convoList
   const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null)
+  const selectedConvoIdRef = useRef<string | null>(null)
+  selectedConvoIdRef.current = selectedConvoId
   const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([])
   const [threadLoading, setThreadLoading] = useState(false)
   const [replyDraft, setReplyDraft] = useState('')
   const [replyBusy, setReplyBusy] = useState(false)
+  const [replyPendingImage, setReplyPendingImage] = useState<{ blob: Blob; previewUrl: string } | null>(null)
 
   const [pendingCustomers, setPendingCustomers] = useState<PendingCustomer[]>([])
   const [reviewBusyId, setReviewBusyId] = useState<string | null>(null)
@@ -137,32 +285,85 @@ export default function DashboardPage() {
   const [reports, setReports] = useState<ReportItem[]>([])
 
   const [announcementType, setAnnouncementType] = useState<'announcement' | 'alert' | 'update'>('announcement')
-  const [audience, setAudience] = useState<'all' | 'selected' | 'one'>('all')
+  const [audience, setAudience] = useState<'all' | 'selected' | 'one' | 'labels'>('all')
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([])
+  const [notifyAudienceLabelIds, setNotifyAudienceLabelIds] = useState<string[]>([])
+  const [notifyRecipientQuery, setNotifyRecipientQuery] = useState('')
+  const [inboxThreadLabelFilterIds, setInboxThreadLabelFilterIds] = useState<string[]>([])
   const [notifyTitle, setNotifyTitle] = useState('')
   const [notifyBody, setNotifyBody] = useState('')
   const [oneUserQuery, setOneUserQuery] = useState('')
   const [notifyBusy, setNotifyBusy] = useState(false)
+  const [reportBusyId, setReportBusyId] = useState<string | null>(null)
 
   const [postTitle, setPostTitle] = useState('')
   const [postBody, setPostBody] = useState('')
   const [postBusy, setPostBusy] = useState(false)
   const [postImage, setPostImage] = useState<{ file: File; previewUrl: string } | null>(null)
   const postFileInputRef = useRef<HTMLInputElement>(null)
+  const replyImageInputRef = useRef<HTMLInputElement>(null)
+  const threadScrollRef = useRef<HTMLDivElement>(null)
+  const threadEndRef = useRef<HTMLDivElement>(null)
   const [myAnnouncements, setMyAnnouncements] = useState<OwnAnnouncementRow[]>([])
   const [myAnnouncementsMeta, setMyAnnouncementsMeta] = useState<
-    Record<string, { likes: number; comments: number }>
+    Record<
+      string,
+      {
+        likes: number
+        comments: number
+        likedBy: { name: string; avatar: string | null }[]
+        commentedBy: string[]
+        commentPreviews: CommentPreview[]
+        commentDetails: EngagementComment[]
+      }
+    >
   >({})
   const [myAnnouncementsLoading, setMyAnnouncementsLoading] = useState(false)
+  const [engagementOpen, setEngagementOpen] = useState<{ postId: string; mode: 'likes' | 'comments' } | null>(null)
+  const [staffCommentReplyDrafts, setStaffCommentReplyDrafts] = useState<Record<string, string>>({})
+  const [staffReplyBusyPostId, setStaffReplyBusyPostId] = useState<string | null>(null)
 
   const [loadError, setLoadError] = useState<string | null>(null)
   const [businessInfo, setBusinessInfo] = useState<{ name: string; slug: string } | null>(null)
   const [activeMembers, setActiveMembers] = useState<ActiveMember[]>([])
   const [suspendedMembers, setSuspendedMembers] = useState<ActiveMember[]>([])
+  const [usersPanelTab, setUsersPanelTab] = useState<UsersPanelTab>('pending')
   const [modBusyId, setModBusyId] = useState<string | null>(null)
   const [dashRefreshing, setDashRefreshing] = useState(false)
+  const [inboxContactOpen, setInboxContactOpen] = useState(false)
+  const [staffNotifyUnread, setStaffNotifyUnread] = useState(0)
+  const [inboxRefreshing, setInboxRefreshing] = useState(false)
+  const [inboxLabelCatalog, setInboxLabelCatalog] = useState<InboxLabelRow[]>([])
+  const [inboxLabelsPopoverOpen, setInboxLabelsPopoverOpen] = useState(false)
+  const inboxLabelsPopoverRef = useRef<HTMLDivElement>(null)
+  const [inboxLabelRowBusy, setInboxLabelRowBusy] = useState<string | null>(null)
+  const [newInboxLabelName, setNewInboxLabelName] = useState('')
+  const [inboxLabelCreateBusy, setInboxLabelCreateBusy] = useState(false)
+  const [inboxSearchQuery, setInboxSearchQuery] = useState('')
+  const [cannedReplies, setCannedReplies] = useState<CannedReplyRow[]>([])
+  const [cannedPopoverOpen, setCannedPopoverOpen] = useState(false)
+  const cannedPopoverRef = useRef<HTMLDivElement>(null)
+  const [cannedPickerQuery, setCannedPickerQuery] = useState('')
+  const [cannedEditId, setCannedEditId] = useState<string | null>(null)
+  const [cannedFormTitle, setCannedFormTitle] = useState('')
+  const [cannedFormBody, setCannedFormBody] = useState('')
+  const [cannedSaveBusy, setCannedSaveBusy] = useState(false)
+  const [cannedDeleteBusyId, setCannedDeleteBusyId] = useState<string | null>(null)
+  const [staffAvatarBusy, setStaffAvatarBusy] = useState(false)
+  const staffAvatarInputRef = useRef<HTMLInputElement>(null)
 
   const profileRef = useRef<ProfileRow | null>(null)
   profileRef.current = profile
+
+  const scrollThreadToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const end = threadEndRef.current
+    if (end) {
+      end.scrollIntoView({ block: 'end', behavior })
+      return
+    }
+    const el = threadScrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
 
   const navItems = useMemo(() => {
     if (!profile || profile.business_role !== 'admin') {
@@ -178,6 +379,8 @@ export default function DashboardPage() {
         setLoadError('Staff profile is missing business_id. Fix it in Supabase public.profiles for your admin user.')
         setBusinessInfo(null)
         setConvoList([])
+        setInboxLabelCatalog([])
+        setCannedReplies([])
         setPendingCustomers([])
         setActiveMembers([])
         setSuspendedMembers([])
@@ -190,21 +393,25 @@ export default function DashboardPage() {
       const { data: bizRow } = await supabase.from('businesses').select('name, slug').eq('id', bid).maybeSingle()
       setBusinessInfo(bizRow ? { name: bizRow.name, slug: bizRow.slug } : null)
 
-      const [convRes, pendingRes, reportRes, convCustRes, followRes] = await Promise.all([
+      const pendingFetch: Promise<{ pending?: PendingCustomer[]; error?: string }> = fetch(
+        '/api/staff/pending-signups',
+        { method: 'GET', cache: 'no-store' }
+      )
+        .then(async (r) => {
+          const j = (await r.json().catch(() => ({}))) as { pending?: PendingCustomer[]; error?: string }
+          if (!r.ok) return { error: j.error || `HTTP ${r.status}` }
+          return { pending: j.pending ?? [] }
+        })
+        .catch((e: unknown) => ({ error: e instanceof Error ? e.message : 'Network error' }))
+
+      const [convRes, pendingRes, reportRes, convCustRes, followRes, cannedRes] = await Promise.all([
         supabase
           .from('conversations')
           .select('id, customer_id, updated_at')
           .eq('business_id', bid)
           .order('updated_at', { ascending: false })
           .limit(80),
-        supabase
-          .from('profiles')
-          .select('id, first_name, last_name, username, created_at, account_status')
-          .eq('role', 'customer')
-          .eq('account_status', 'pending')
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(80),
+        pendingFetch,
         supabase
           .from('admin_reports')
           .select('id, reporter_name, category, status, details, created_at')
@@ -213,18 +420,38 @@ export default function DashboardPage() {
           .limit(20),
         supabase.from('conversations').select('customer_id').eq('business_id', bid),
         supabase.from('follows').select('user_id').eq('business_id', bid),
+        supabase
+          .from('inbox_canned_replies')
+          .select('id, title, body, sort_order')
+          .eq('business_id', bid)
+          .order('sort_order', { ascending: true })
+          .order('title', { ascending: true }),
       ])
 
       const errs: string[] = []
       if (convRes.error) errs.push(`conversations: ${convRes.error.message}`)
-      if (pendingRes.error) errs.push(`pending: ${pendingRes.error.message}`)
+      if (pendingRes.error) errs.push(`pending: ${pendingRes.error}`)
       if (reportRes.error) errs.push(`reports: ${reportRes.error.message}`)
       if (convCustRes.error) errs.push(`members(conv): ${convCustRes.error.message}`)
       if (followRes.error) errs.push(`members(follows): ${followRes.error.message}`)
+      if (cannedRes.error) errs.push(`canned replies: ${cannedRes.error.message}`)
       if (errs.length) setLoadError(errs.join(' · '))
 
+      if (!cannedRes.error) {
+        setCannedReplies(
+          (cannedRes.data || []).map((r: Record<string, unknown>) => ({
+            id: r.id as string,
+            title: r.title as string,
+            body: r.body as string,
+            sort_order: Number(r.sort_order ?? 0),
+          }))
+        )
+      } else {
+        setCannedReplies([])
+      }
+
       const convoRows = convRes.data || []
-      setPendingCustomers((pendingRes.data || []) as PendingCustomer[])
+      setPendingCustomers((pendingRes.pending || []) as PendingCustomer[])
 
       if (Array.isArray(reportRes.data) && reportRes.data.length > 0) {
         setReports(
@@ -243,15 +470,37 @@ export default function DashboardPage() {
       const convIds = convoRows.map((c: { id: string }) => c.id)
       const customerIds = [...new Set(convoRows.map((c: { customer_id: string }) => c.customer_id))]
 
-      const profileById: Record<string, { first_name: string; last_name: string; username: string }> = {}
+      const activeThreadId = selectedConvoIdRef.current
+      const inboxActive = activeTabRef.current === 'inbox'
+      if (inboxActive && activeThreadId && convIds.includes(activeThreadId)) {
+        const { data: activeConvo, error: activeErr } = await supabase
+          .from('conversations')
+          .select('customer_id')
+          .eq('id', activeThreadId)
+          .maybeSingle()
+        if (!activeErr && activeConvo?.customer_id) {
+          const { errorMessage: markErr } = await markCustomerMessagesReadForStaff(
+            supabase,
+            activeThreadId,
+            activeConvo.customer_id as string
+          )
+          if (markErr)
+            setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages(mark read): ${markErr}`)
+          const { errorMessage: nMarkErr } = await markConversationNotificationsRead(supabase, p.id, activeThreadId)
+          if (nMarkErr)
+            setLoadError((prev) => (prev ? `${prev} · ` : '') + `notifications(mark read): ${nMarkErr}`)
+        }
+      }
+
+      const profileById: Record<string, { first_name: string; last_name: string; username: string; avatar_url?: string | null }> = {}
       if (customerIds.length > 0) {
         const { data: profs, error: pe } = await supabase
           .from('profiles')
-          .select('id, first_name, last_name, username')
+          .select('id, first_name, last_name, username, avatar_url')
           .in('id', customerIds)
         if (pe) setLoadError((prev) => (prev ? `${prev} · ` : '') + `profiles: ${pe.message}`)
         for (const row of profs || []) {
-          const r = row as { id: string; first_name: string; last_name: string; username: string }
+          const r = row as { id: string; first_name: string; last_name: string; username: string; avatar_url?: string | null }
           profileById[r.id] = r
         }
       }
@@ -278,15 +527,56 @@ export default function DashboardPage() {
 
         const { data: unreadRows, error: ue } = await supabase
           .from('messages')
-          .select('conversation_id, sender_id')
+          .select('conversation_id, sender_id, read')
           .in('conversation_id', convIds)
-          .eq('read', false)
         if (ue) setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages(unread): ${ue.message}`)
         for (const m of unreadRows || []) {
-          const row = m as { conversation_id: string; sender_id: string }
+          const row = m as { conversation_id: string; sender_id: string; read: boolean | null }
+          if (row.read === true) continue
           const cust = customerByConvo[row.conversation_id]
           if (cust && row.sender_id === cust) {
             unreadByConvo[row.conversation_id] = (unreadByConvo[row.conversation_id] || 0) + 1
+          }
+        }
+      }
+
+      const { data: defRows, error: defErr } = await supabase
+        .from('inbox_label_definitions')
+        .select('id, name, color, is_system')
+        .eq('business_id', bid)
+        .order('is_system', { ascending: false })
+        .order('name')
+      if (defErr)
+        setLoadError((prev) => (prev ? `${prev} · ` : '') + `inbox_label_definitions: ${defErr.message}`)
+      const labelCatalog: InboxLabelRow[] = (defRows || []).map((r: Record<string, unknown>) => ({
+        id: r.id as string,
+        name: r.name as string,
+        color: (r.color as string | null) ?? null,
+        is_system: Boolean(r.is_system),
+      }))
+      setInboxLabelCatalog(labelCatalog)
+      const defById = Object.fromEntries(labelCatalog.map((d) => [d.id, d])) as Record<string, InboxLabelRow>
+      const labelsByConvo: Record<string, InboxLabelRow[]> = {}
+      if (convIds.length > 0 && !defErr) {
+        const { data: assignRows, error: assignErr } = await supabase
+          .from('conversation_inbox_labels')
+          .select('conversation_id, label_id')
+          .in('conversation_id', convIds)
+        if (assignErr)
+          setLoadError((prev) => (prev ? `${prev} · ` : '') + `conversation_inbox_labels: ${assignErr.message}`)
+        else {
+          for (const row of assignRows || []) {
+            const r = row as { conversation_id: string; label_id: string }
+            const d = defById[r.label_id]
+            if (!d) continue
+            if (!labelsByConvo[r.conversation_id]) labelsByConvo[r.conversation_id] = []
+            labelsByConvo[r.conversation_id].push(d)
+          }
+          for (const cid of Object.keys(labelsByConvo)) {
+            labelsByConvo[cid].sort((a, b) => {
+              if (a.is_system !== b.is_system) return a.is_system ? -1 : 1
+              return a.name.localeCompare(b.name)
+            })
           }
         }
       }
@@ -302,12 +592,23 @@ export default function DashboardPage() {
           customer_id: row.customer_id,
           customerName: name,
           customerUsername: pr?.username ?? '…',
+          customerAvatar: pr?.avatar_url ?? null,
           preview: pv?.body || 'No messages yet',
           updated_at: row.updated_at,
           unreadCount: unreadByConvo[row.id] || 0,
+          labels: labelsByConvo[row.id] || [],
         }
       })
       setConvoList(list)
+
+      {
+        const { count: bellCount, error: bellErr } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', p.id)
+          .eq('read', false)
+        if (!bellErr) setStaffNotifyUnread(bellCount ?? 0)
+      }
 
       const memberIds = new Set<string>()
       for (const r of convCustRes.data || []) memberIds.add((r as { customer_id: string }).customer_id)
@@ -360,19 +661,88 @@ export default function DashboardPage() {
         }
 
         const [{ data: likes }, { data: coms }] = await Promise.all([
-          supabase.from('reactions').select('announcement_id').in('announcement_id', ids).eq('reaction', 'like'),
-          supabase.from('comments').select('announcement_id').in('announcement_id', ids),
+          supabase.from('reactions').select('announcement_id, user_id').in('announcement_id', ids).eq('reaction', 'like'),
+          supabase.from('comments').select('id, announcement_id, user_id, parent_comment_id, body, created_at').in('announcement_id', ids),
         ])
 
-        const meta: Record<string, { likes: number; comments: number }> = {}
-        for (const id of ids) meta[id] = { likes: 0, comments: 0 }
+        const userIds = new Set<string>()
+        for (const r of likes || []) userIds.add((r as { user_id: string }).user_id)
+        for (const c of coms || []) userIds.add((c as { user_id: string }).user_id)
+
+        let profileMap = new Map<string, BasicProfile>()
+        if (userIds.size > 0) {
+          const { data: rows } = await supabase
+            .from('profiles')
+            .select('id, username, first_name, last_name, avatar_url')
+            .in('id', [...userIds])
+          profileMap = new Map((rows || []).map((row) => [row.id, row as BasicProfile]))
+        }
+
+        const displayNameFor = (userId: string) => {
+          const p = profileMap.get(userId)
+          if (!p) return 'Member'
+          const full = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim()
+          return full || `@${p.username}`
+        }
+
+        const meta: Record<
+          string,
+          {
+            likes: number
+            comments: number
+            likedBy: { name: string; avatar: string | null }[]
+            commentedBy: string[]
+            commentPreviews: CommentPreview[]
+            commentDetails: EngagementComment[]
+          }
+        > = {}
+        for (const id of ids) meta[id] = { likes: 0, comments: 0, likedBy: [], commentedBy: [], commentPreviews: [], commentDetails: [] }
         for (const r of likes || []) {
-          const aid = (r as { announcement_id: string }).announcement_id
-          if (meta[aid]) meta[aid].likes += 1
+          const row = r as { announcement_id: string; user_id: string }
+          const aid = row.announcement_id
+          if (meta[aid]) {
+            meta[aid].likes += 1
+            const name = displayNameFor(row.user_id)
+            const avatar = profileMap.get(row.user_id)?.avatar_url ?? null
+            if (!meta[aid].likedBy.some((x) => x.name === name)) meta[aid].likedBy.push({ name, avatar })
+          }
         }
         for (const c of coms || []) {
-          const aid = (c as { announcement_id: string }).announcement_id
-          if (meta[aid]) meta[aid].comments += 1
+          const row = c as {
+            id: string
+            announcement_id: string
+            user_id: string
+            parent_comment_id: string | null
+            body: string
+            created_at: string
+          }
+          const aid = row.announcement_id
+          if (meta[aid]) {
+            meta[aid].comments += 1
+            const name = displayNameFor(row.user_id)
+            if (!meta[aid].commentedBy.includes(name)) meta[aid].commentedBy.push(name)
+            meta[aid].commentPreviews.push({
+              id: row.id,
+              body: row.body,
+              created_at: row.created_at,
+              userName: name,
+              userAvatar: profileMap.get(row.user_id)?.avatar_url ?? null,
+            })
+            meta[aid].commentDetails.push({
+              id: row.id,
+              user_id: row.user_id,
+              parent_comment_id: row.parent_comment_id ?? null,
+              body: row.body,
+              created_at: row.created_at,
+              userName: name,
+              userAvatar: profileMap.get(row.user_id)?.avatar_url ?? null,
+            })
+          }
+        }
+        for (const id of ids) {
+          meta[id].commentPreviews.sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+          meta[id].commentPreviews = meta[id].commentPreviews.slice(0, 3)
+          meta[id].commentDetails.sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
         }
         setMyAnnouncementsMeta(meta)
       } catch (e) {
@@ -385,6 +755,31 @@ export default function DashboardPage() {
     },
     [supabase]
   )
+
+  async function submitStaffCommentReply(postId: string, parentCommentId: string) {
+    const p = profileRef.current
+    if (!p?.business_id) return
+    const key = `${postId}::${parentCommentId}`
+    const text = (staffCommentReplyDrafts[key] || '').trim()
+    if (!text) return
+    setStaffReplyBusyPostId(postId)
+    try {
+      const { error } = await supabase.from('comments').insert({
+        announcement_id: postId,
+        user_id: p.id,
+        body: text,
+        parent_comment_id: parentCommentId,
+      })
+      if (error) throw error
+      setStaffCommentReplyDrafts((d) => ({ ...d, [key]: '' }))
+      await loadMyAnnouncements(p.business_id)
+    } catch (e) {
+      console.error(e)
+      alert(e instanceof Error ? e.message : 'Could not post reply. Run migration 008_comments_threading.sql if replies fail.')
+    } finally {
+      setStaffReplyBusyPostId(null)
+    }
+  }
 
   useEffect(() => {
     if (activeTab !== 'post' || profile?.business_role !== 'admin' || !profile.business_id) return
@@ -404,7 +799,7 @@ export default function DashboardPage() {
 
       const { data: prof, error } = await supabase
         .from('profiles')
-        .select('id, role, username, business_id, business_role')
+        .select('id, role, username, avatar_url, business_id, business_role')
         .eq('id', session.user.id)
         .single()
 
@@ -438,6 +833,36 @@ export default function DashboardPage() {
   }, [refreshDashboard])
 
   useEffect(() => {
+    setInboxContactOpen(false)
+  }, [selectedConvoId])
+
+  useEffect(() => {
+    if (!inboxLabelsPopoverOpen) return
+    function onDoc(e: MouseEvent) {
+      const el = inboxLabelsPopoverRef.current
+      if (el && !el.contains(e.target as Node)) setInboxLabelsPopoverOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [inboxLabelsPopoverOpen])
+
+  useEffect(() => {
+    if (!cannedPopoverOpen) return
+    function onDoc(e: MouseEvent) {
+      const el = cannedPopoverRef.current
+      if (el && !el.contains(e.target as Node)) setCannedPopoverOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [cannedPopoverOpen])
+
+  useEffect(() => {
+    if (!selectedConvoId || threadLoading) return
+    const raf = window.requestAnimationFrame(() => scrollThreadToLatest('auto'))
+    return () => window.cancelAnimationFrame(raf)
+  }, [selectedConvoId, threadLoading, threadMessages.length, scrollThreadToLatest])
+
+  useEffect(() => {
     const p = profileRef.current
     if (!p?.business_id) return
 
@@ -447,7 +872,7 @@ export default function DashboardPage() {
       timer = window.setTimeout(() => {
         const current = profileRef.current
         if (current?.business_id) void refreshDashboard(current)
-      }, 350)
+      }, 100)
     }
 
     const channel = supabase
@@ -457,6 +882,9 @@ export default function DashboardPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'follows', filter: `business_id=eq.${p.business_id}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, queueRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_inbox_labels' }, queueRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_label_definitions' }, queueRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inbox_canned_replies' }, queueRefresh)
       .subscribe()
 
     return () => {
@@ -476,12 +904,46 @@ export default function DashboardPage() {
           void openThread(selectedConvoId)
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selectedConvoId}` },
+        () => {
+          void openThread(selectedConvoId)
+        }
+      )
       .subscribe()
 
     return () => {
       void supabase.removeChannel(channel)
     }
   }, [supabase, selectedConvoId])
+
+  useEffect(() => {
+    const uid = profile?.id
+    if (!uid) return
+
+    async function bumpBell() {
+      const { count } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', uid)
+        .eq('read', false)
+      setStaffNotifyUnread(count ?? 0)
+    }
+
+    const channel = supabase
+      .channel(`staff-notifications-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
+        () => void bumpBell()
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [supabase, profile?.id])
 
   async function manualRefresh() {
     const p = profileRef.current
@@ -534,30 +996,255 @@ export default function DashboardPage() {
     }
   }
 
+  function clearReplyPendingImage() {
+    setReplyPendingImage((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl)
+      return null
+    })
+  }
+
+  async function applyInboxLabelOnThread(labelId: string, assign: boolean, defOverride?: InboxLabelRow) {
+    const convId = selectedConvoIdRef.current
+    if (!convId) return
+    const def = defOverride ?? inboxLabelCatalog.find((d) => d.id === labelId)
+    if (assign && !def) return
+    setInboxLabelRowBusy(labelId)
+    try {
+      if (assign) {
+        const { error } = await supabase.from('conversation_inbox_labels').insert({
+          conversation_id: convId,
+          label_id: labelId,
+        })
+        if (error) throw error
+        setConvoList((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId || !def) return c
+            if (c.labels.some((l) => l.id === labelId)) return c
+            const next = [...c.labels, def].sort((a, b) => {
+              if (a.is_system !== b.is_system) return a.is_system ? -1 : 1
+              return a.name.localeCompare(b.name)
+            })
+            return { ...c, labels: next }
+          })
+        )
+      } else {
+        const { error } = await supabase
+          .from('conversation_inbox_labels')
+          .delete()
+          .eq('conversation_id', convId)
+          .eq('label_id', labelId)
+        if (error) throw error
+        setConvoList((prev) =>
+          prev.map((c) => (c.id !== convId ? c : { ...c, labels: c.labels.filter((l) => l.id !== labelId) }))
+        )
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not update label')
+      const cur = profileRef.current
+      if (cur?.business_id) void refreshDashboard(cur)
+    } finally {
+      setInboxLabelRowBusy(null)
+    }
+  }
+
+  async function createInboxLabelFromDraft() {
+    const p = profileRef.current
+    const name = newInboxLabelName.trim()
+    if (!p?.business_id || !name) return
+    setInboxLabelCreateBusy(true)
+    try {
+      const { data, error } = await supabase
+        .from('inbox_label_definitions')
+        .insert({
+          business_id: p.business_id,
+          name,
+          color: '#94a3b8',
+          is_system: false,
+        })
+        .select('id, name, color, is_system')
+        .single()
+      if (error) throw error
+      const row = data as { id: string; name: string; color: string | null; is_system: boolean }
+      const added: InboxLabelRow = {
+        id: row.id,
+        name: row.name,
+        color: row.color,
+        is_system: row.is_system,
+      }
+      setInboxLabelCatalog((prev) =>
+        [...prev, added].sort((a, b) => {
+          if (a.is_system !== b.is_system) return a.is_system ? -1 : 1
+          return a.name.localeCompare(b.name)
+        })
+      )
+      setNewInboxLabelName('')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not create label')
+    } finally {
+      setInboxLabelCreateBusy(false)
+    }
+  }
+
+  async function deleteInboxLabelDefinition(labelId: string) {
+    const def = inboxLabelCatalog.find((d) => d.id === labelId)
+    if (!def || def.is_system) return
+    if (!window.confirm(`Remove label "${def.name}" from your team? It will be removed from all threads.`)) return
+    setInboxLabelRowBusy(labelId)
+    try {
+      const { error } = await supabase.from('inbox_label_definitions').delete().eq('id', labelId)
+      if (error) throw error
+      setInboxLabelCatalog((prev) => prev.filter((d) => d.id !== labelId))
+      setConvoList((prev) => prev.map((c) => ({ ...c, labels: c.labels.filter((l) => l.id !== labelId) })))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not delete label')
+    } finally {
+      setInboxLabelRowBusy(null)
+    }
+  }
+
+  function insertCannedReplyIntoDraft(row: CannedReplyRow) {
+    const convId = selectedConvoIdRef.current
+    if (!convId) {
+      alert('Select a conversation first.')
+      return
+    }
+    const conv = convoListRef.current.find((c) => c.id === convId)
+    if (!conv) {
+      alert('Select a conversation first.')
+      return
+    }
+    const bizName = businessInfo?.name?.trim() || 'our team'
+    const expanded = expandCannedReplyBody(row.body, {
+      customerName: conv.customerName,
+      customerUsername: conv.customerUsername,
+      businessName: bizName,
+    })
+    setReplyDraft((d) => mergeCannedIntoDraft(d, expanded))
+    setCannedPopoverOpen(false)
+    setCannedPickerQuery('')
+  }
+
+  function beginEditCanned(row: CannedReplyRow) {
+    setCannedEditId(row.id)
+    setCannedFormTitle(row.title)
+    setCannedFormBody(row.body)
+  }
+
+  function cancelCannedForm() {
+    setCannedEditId(null)
+    setCannedFormTitle('')
+    setCannedFormBody('')
+  }
+
+  async function saveCannedReplyForm() {
+    const p = profileRef.current
+    if (!p?.business_id) return
+    const title = cannedFormTitle.trim()
+    const body = cannedFormBody.trim()
+    if (!title || !body) {
+      alert('Title and message body are required.')
+      return
+    }
+    setCannedSaveBusy(true)
+    try {
+      if (cannedEditId) {
+        const { error } = await supabase
+          .from('inbox_canned_replies')
+          .update({ title, body })
+          .eq('id', cannedEditId)
+          .eq('business_id', p.business_id)
+        if (error) throw error
+        setCannedReplies((prev) =>
+          prev
+            .map((r) => (r.id === cannedEditId ? { ...r, title, body } : r))
+            .sort((a, b) => {
+              if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+              return a.title.localeCompare(b.title)
+            })
+        )
+      } else {
+        const { data, error } = await supabase
+          .from('inbox_canned_replies')
+          .insert({
+            business_id: p.business_id,
+            title,
+            body,
+            sort_order: cannedReplies.length,
+          })
+          .select('id, title, body, sort_order')
+          .single()
+        if (error) throw error
+        const row = data as { id: string; title: string; body: string; sort_order: number }
+        setCannedReplies((prev) =>
+          [...prev, { id: row.id, title: row.title, body: row.body, sort_order: row.sort_order }].sort((a, b) =>
+            a.title.localeCompare(b.title)
+          )
+        )
+      }
+      cancelCannedForm()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not save quick reply')
+    } finally {
+      setCannedSaveBusy(false)
+    }
+  }
+
+  async function deleteCannedReply(id: string) {
+    const p = profileRef.current
+    if (!p?.business_id) return
+    if (!window.confirm('Delete this quick reply?')) return
+    setCannedDeleteBusyId(id)
+    try {
+      const { error } = await supabase.from('inbox_canned_replies').delete().eq('id', id).eq('business_id', p.business_id)
+      if (error) throw error
+      setCannedReplies((prev) => prev.filter((r) => r.id !== id))
+      if (cannedEditId === id) cancelCannedForm()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not delete quick reply')
+    } finally {
+      setCannedDeleteBusyId(null)
+    }
+  }
+
   async function openThread(conversationId: string) {
+    setInboxLabelsPopoverOpen(false)
+    setCannedPopoverOpen(false)
     setSelectedConvoId(conversationId)
     setThreadLoading(true)
     setReplyDraft('')
-    const customerId = convoList.find((c) => c.id === conversationId)?.customer_id
+    clearReplyPendingImage()
     try {
+      const { data: convoMeta, error: convoErr } = await supabase
+        .from('conversations')
+        .select('customer_id')
+        .eq('id', conversationId)
+        .maybeSingle()
+      if (convoErr) throw convoErr
+      const customerId = convoMeta?.customer_id as string | undefined
+
+      if (customerId) {
+        const { errorMessage: readErr } = await markCustomerMessagesReadForStaff(supabase, conversationId, customerId)
+        if (readErr) console.error(readErr)
+        setConvoList((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
+      }
+      if (profile?.id) {
+        const { errorMessage: nErr } = await markConversationNotificationsRead(supabase, profile.id, conversationId)
+        if (nErr) console.error(nErr)
+        const { count } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', profile.id)
+          .eq('read', false)
+        setStaffNotifyUnread(count ?? 0)
+      }
+
       const { data, error } = await supabase
         .from('messages')
-        .select('id, sender_id, body, created_at, image_url')
+        .select('id, sender_id, body, created_at, image_url, read, read_at')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
       if (error) throw error
       setThreadMessages((data || []) as ThreadMessage[])
-
-      if (customerId) {
-        const { error: readErr } = await supabase
-          .from('messages')
-          .update({ read: true })
-          .eq('conversation_id', conversationId)
-          .eq('sender_id', customerId)
-          .eq('read', false)
-        if (readErr) console.error(readErr)
-        setConvoList((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
-      }
     } catch (e) {
       console.error(e)
       setThreadMessages([])
@@ -566,31 +1253,127 @@ export default function DashboardPage() {
     }
   }
 
+  async function onReplyImagePick(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    if (!f.type.startsWith('image/') || f.type.startsWith('video/')) {
+      alert('Only image files are allowed (no video).')
+      return
+    }
+    if (f.size > 20 * 1024 * 1024) {
+      alert('Please choose an image under 20 MB.')
+      return
+    }
+    try {
+      const blob = await downscaleImageFileToJpeg(f, { maxDim: 1280, quality: 0.85 })
+      const previewUrl = URL.createObjectURL(blob)
+      setReplyPendingImage((prev) => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl)
+        return { blob, previewUrl }
+      })
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : 'Could not process the image.')
+    }
+  }
+
   async function sendReply() {
     if (!profile || !selectedConvoId) return
     const text = replyDraft.trim()
-    if (!text) return
+    const hasImage = !!replyPendingImage
+    if (!text && !hasImage) return
     setReplyBusy(true)
     try {
+      let imageUrl: string | null = null
+      if (hasImage && replyPendingImage) {
+        const path = `${profile.id}/${selectedConvoId}/${crypto.randomUUID()}.jpg`
+        const { error: upErr } = await supabase.storage
+          .from('message-images')
+          .upload(path, replyPendingImage.blob, {
+            contentType: 'image/jpeg',
+            upsert: false,
+          })
+        if (upErr) throw upErr
+        const { data: pub } = supabase.storage.from('message-images').getPublicUrl(path)
+        imageUrl = pub.publicUrl
+      }
+
+      const body = text || (imageUrl ? '📷' : ' ')
+
       const { data, error } = await supabase
         .from('messages')
         .insert({
           conversation_id: selectedConvoId,
           sender_id: profile.id,
-          body: text,
+          body,
+          image_url: imageUrl,
         })
-        .select('id, sender_id, body, created_at, image_url')
+        .select('id, sender_id, body, created_at, image_url, read, read_at')
         .single()
       if (error) throw error
       setThreadMessages((prev) => [...prev, data as ThreadMessage])
       setReplyDraft('')
+      clearReplyPendingImage()
       await supabase.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', selectedConvoId)
+
+      {
+        const row = data as { body: string }
+        let preview = (row.body ?? '').trim().slice(0, 160)
+        if (!preview) preview = '📷 Reply'
+        void fetch('/api/staff/notify-customer-reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: selectedConvoId, preview }),
+        }).then(async (res) => {
+          if (res.ok) return
+          const j = (await res.json().catch(() => ({}))) as { error?: string }
+          console.error('notify-customer-reply failed:', res.status, j.error ?? j)
+          // If the server has no service role key, try RLS insert as the signed-in staff user.
+          const p = profileRef.current
+          const convoId = selectedConvoIdRef.current
+          if (!p?.business_id || !convoId) return
+          const { data: convo, error: convoErr } = await supabase
+            .from('conversations')
+            .select('customer_id')
+            .eq('id', convoId)
+            .single()
+          if (convoErr || !(convo as { customer_id?: string } | null)?.customer_id) return
+          const customerId = (convo as { customer_id: string }).customer_id
+          const { error: nErr } = await supabase.from('notifications').insert({
+            user_id: customerId,
+            business_id: p.business_id,
+            type: 'support_reply',
+            title: 'New reply from the team',
+            body: preview,
+            link: '/feed',
+            conversation_id: convoId,
+          })
+          if (nErr) console.error('fallback customer notification insert:', nErr)
+        })
+      }
+
       await refreshDashboard(profileRef.current!)
     } catch (e) {
       console.error(e)
-      alert('Could not send message. Check you are still signed in and RLS allows staff replies.')
+      alert(
+        'Could not send. Check you are signed in and RLS allows staff replies. For photos, run migration 002_message_images_storage.sql if needed.'
+      )
     } finally {
       setReplyBusy(false)
+    }
+  }
+
+  async function refreshInbox() {
+    const p = profileRef.current
+    if (!p?.business_id) return
+    setInboxRefreshing(true)
+    try {
+      await refreshDashboard(p)
+      const cid = selectedConvoIdRef.current
+      if (cid) await openThread(cid)
+    } finally {
+      setInboxRefreshing(false)
     }
   }
 
@@ -740,11 +1523,6 @@ export default function DashboardPage() {
     const body = notifyBody.trim()
     if (!title || !body) return
 
-    if (audience === 'selected') {
-      alert('Selected users is not wired yet. Choose All or One user.')
-      return
-    }
-
     setNotifyBusy(true)
     try {
       const recipientIds = new Set<string>()
@@ -754,7 +1532,7 @@ export default function DashboardPage() {
         for (const c of convos || []) recipientIds.add((c as { customer_id: string }).customer_id)
         const { data: follows } = await supabase.from('follows').select('user_id').eq('business_id', profile.business_id)
         for (const f of follows || []) recipientIds.add((f as { user_id: string }).user_id)
-      } else {
+      } else if (audience === 'one') {
         const raw = oneUserQuery.trim()
         if (!raw) {
           alert('Enter a username or user UUID for One user.')
@@ -777,35 +1555,137 @@ export default function DashboardPage() {
           }
           recipientIds.add((u as { id: string }).id)
         }
+      } else if (audience === 'labels') {
+        if (notifyAudienceLabelIds.length === 0) {
+          alert('Choose at least one inbox label. Recipients are customers with a labeled thread for your business.')
+          setNotifyBusy(false)
+          return
+        }
+        const { data: assignRows, error: aErr } = await supabase
+          .from('conversation_inbox_labels')
+          .select('conversation_id')
+          .in('label_id', notifyAudienceLabelIds)
+        if (aErr) throw aErr
+        const convIds = [...new Set((assignRows || []).map((r: { conversation_id: string }) => r.conversation_id))]
+        if (convIds.length === 0) {
+          alert('No conversations use those labels yet.')
+          setNotifyBusy(false)
+          return
+        }
+        const convChunk = 200
+        for (let i = 0; i < convIds.length; i += convChunk) {
+          const slice = convIds.slice(i, i + convChunk)
+          const { data: convoRows, error: cErr } = await supabase
+            .from('conversations')
+            .select('customer_id')
+            .eq('business_id', profile.business_id)
+            .in('id', slice)
+          if (cErr) throw cErr
+          for (const row of convoRows || []) {
+            recipientIds.add((row as { customer_id: string }).customer_id)
+          }
+        }
+      } else {
+        for (const id of selectedRecipientIds) recipientIds.add(id)
       }
 
       if (recipientIds.size === 0) {
-        alert('No recipients yet. Customers appear after they message you or follow your business.')
+        alert('No recipients match this audience yet.')
         setNotifyBusy(false)
         return
       }
 
-      const rows = [...recipientIds].map((user_id) => ({
+      const candidateIds = [...recipientIds]
+      const approvedSet = new Set<string>()
+      const idChunk = 200
+      for (let i = 0; i < candidateIds.length; i += idChunk) {
+        const slice = candidateIds.slice(i, i + idChunk)
+        const { data: approvedRows, error: apErr } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('id', slice)
+          .eq('role', 'customer')
+          .eq('account_status', 'approved')
+          .is('deleted_at', null)
+        if (apErr) throw apErr
+        for (const r of approvedRows || []) approvedSet.add((r as { id: string }).id)
+      }
+      const approvedIds = [...approvedSet]
+      if (approvedIds.length === 0) {
+        alert('No approved customers to notify (pending or suspended accounts are skipped).')
+        setNotifyBusy(false)
+        return
+      }
+
+      const rows = approvedIds.map((user_id) => ({
         user_id,
         business_id: profile.business_id,
         type: announcementType,
         title,
         body,
-        link: '/feed',
+        link: '/notifications',
       }))
 
-      const { error } = await supabase.from('notifications').insert(rows)
-      if (error) throw error
+      const chunk = 150
+      for (let i = 0; i < rows.length; i += chunk) {
+        const { error } = await supabase.from('notifications').insert(rows.slice(i, i + chunk))
+        if (error) throw error
+      }
+
       setNotifyTitle('')
       setNotifyBody('')
       setOneUserQuery('')
-      alert(`Sent ${rows.length} notification(s).`)
+      setSelectedRecipientIds([])
+      setNotifyAudienceLabelIds([])
+      setNotifyRecipientQuery('')
+      alert(
+        `Sent ${rows.length} in-app notification(s). Customers see these under the bell on the feed — not SMS or DM.`
+      )
     } catch (e) {
       console.error(e)
       alert(e instanceof Error ? e.message : 'Could not send notifications.')
     } finally {
       setNotifyBusy(false)
     }
+  }
+
+  async function uploadStaffAvatar(file: File) {
+    if (!profile) return
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Please choose an image under 5 MB.')
+      return
+    }
+    setStaffAvatarBusy(true)
+    try {
+      const ext = extFromImageFile(file)
+      const path = `${profile.id}/avatar.${ext}`
+      const { error: upErr } = await supabase.storage.from('profile-images').upload(path, file, {
+        contentType: file.type || 'image/jpeg',
+        upsert: true,
+      })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from('profile-images').getPublicUrl(path)
+      const nextUrl = `${pub.publicUrl}?v=${Date.now()}`
+      const { error: saveErr } = await supabase.from('profiles').update({ avatar_url: nextUrl }).eq('id', profile.id)
+      if (saveErr) throw saveErr
+      setProfile((prev) => (prev ? { ...prev, avatar_url: nextUrl } : prev))
+    } catch (e) {
+      console.error(e)
+      alert(e instanceof Error ? e.message : 'Could not upload profile photo.')
+    } finally {
+      setStaffAvatarBusy(false)
+    }
+  }
+
+  async function onStaffAvatarPick(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    await uploadStaffAvatar(f)
   }
 
   async function signOut() {
@@ -827,6 +1707,114 @@ export default function DashboardPage() {
     [convoList]
   )
 
+  const filteredConvoList = useMemo(() => {
+    const q = inboxSearchQuery.trim().toLowerCase()
+    if (!q) return convoList
+    return convoList.filter((c) => {
+      const labelsText = c.labels.map((l) => l.name).join(' ').toLowerCase()
+      return (
+        c.customerName.toLowerCase().includes(q) ||
+        c.customerUsername.toLowerCase().includes(q) ||
+        c.preview.toLowerCase().includes(q) ||
+        labelsText.includes(q)
+      )
+    })
+  }, [convoList, inboxSearchQuery])
+
+  const inboxDisplayList = useMemo(() => {
+    if (inboxThreadLabelFilterIds.length === 0) return filteredConvoList
+    return filteredConvoList.filter((c) =>
+      inboxThreadLabelFilterIds.some((lid) => c.labels.some((l) => l.id === lid))
+    )
+  }, [filteredConvoList, inboxThreadLabelFilterIds])
+
+  const filteredCannedPickerList = useMemo(() => {
+    const q = cannedPickerQuery.trim().toLowerCase()
+    if (!q) return cannedReplies
+    return cannedReplies.filter((r) => r.title.toLowerCase().includes(q) || r.body.toLowerCase().includes(q))
+  }, [cannedReplies, cannedPickerQuery])
+
+  const threadSeenIndexes = useMemo(() => {
+    const uid = profile?.id
+    if (!uid || threadMessages.length === 0) return { lastStaff: -1, lastOther: -1 }
+    let lastStaff = -1
+    let lastOther = -1
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      if (lastStaff < 0 && threadMessages[i].sender_id === uid) lastStaff = i
+      if (lastOther < 0 && threadMessages[i].sender_id !== uid) lastOther = i
+    }
+    return { lastStaff, lastOther }
+  }, [threadMessages, profile?.id])
+
+  const selectableRecipients = useMemo(() => {
+    const map = new Map<string, ActiveMember>()
+    for (const member of activeMembers) map.set(member.id, member)
+    return [...map.values()].sort((a, b) => (a.username || '').localeCompare(b.username || ''))
+  }, [activeMembers])
+
+  const filteredSelectableRecipients = useMemo(() => {
+    const q = notifyRecipientQuery.trim().toLowerCase()
+    if (!q) return selectableRecipients
+    return selectableRecipients.filter((m) => {
+      const name = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim().toLowerCase()
+      return name.includes(q) || (m.username || '').toLowerCase().includes(q)
+    })
+  }, [selectableRecipients, notifyRecipientQuery])
+
+  function toggleSelectedRecipient(userId: string) {
+    setSelectedRecipientIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    )
+  }
+
+  function toggleNotifyAudienceLabel(labelId: string) {
+    setNotifyAudienceLabelIds((prev) =>
+      prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId]
+    )
+  }
+
+  function toggleInboxThreadLabelFilter(labelId: string) {
+    setInboxThreadLabelFilterIds((prev) =>
+      prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId]
+    )
+  }
+
+  function selectAllNotifyRecipients() {
+    setSelectedRecipientIds(selectableRecipients.map((m) => m.id))
+  }
+
+  function clearNotifyRecipients() {
+    setSelectedRecipientIds([])
+  }
+
+  /** Adds everyone currently matching the search filter to the selection (does not remove others). */
+  function addFilteredRecipientsToSelection() {
+    setSelectedRecipientIds((prev) => {
+      const s = new Set(prev)
+      for (const m of filteredSelectableRecipients) s.add(m.id)
+      return [...s]
+    })
+  }
+
+  async function updateReportStatus(reportId: string, status: ReportItem['status']) {
+    if (!profile?.business_id) return
+    setReportBusyId(reportId)
+    try {
+      const { error } = await supabase
+        .from('admin_reports')
+        .update({ status })
+        .eq('id', reportId)
+        .eq('business_id', profile.business_id)
+      if (error) throw error
+      setReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, status } : r)))
+    } catch (e) {
+      console.error(e)
+      alert(e instanceof Error ? e.message : 'Could not update report status.')
+    } finally {
+      setReportBusyId(null)
+    }
+  }
+
   if (loading || !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050814]">
@@ -837,19 +1825,65 @@ export default function DashboardPage() {
 
   const isAdmin = profile.business_role === 'admin'
   const mobileGridClass = navItems.length > 5 ? 'grid-cols-6' : 'grid-cols-5'
+  const selectedConvo = convoList.find((c) => c.id === selectedConvoId) || null
+  const activeNav = navItems.find((n) => n.id === activeTab)
+  const headerTitle = activeNav?.label ?? 'Dashboard'
+  const staffRoleLabel = profile.business_role === 'admin' ? 'Admin' : 'Support Staff'
+  const headerSubParts = ['Relay Staff', businessInfo?.name, staffRoleLabel].filter(Boolean) as string[]
+  const headerSub = headerSubParts.join(' · ')
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1a2250_0%,_#070a18_44%,_#050814_100%)] text-white lg:grid lg:grid-cols-[260px_1fr]">
-      <aside className="hidden lg:flex flex-col border-r border-white/10 bg-[#0a1024]/90 backdrop-blur-xl p-6 gap-5">
-        <div className="px-2 py-1">
-          <p className="text-xs uppercase tracking-[0.18em] text-[#7d86a8]">Staff Portal</p>
-          <div className="mt-2">
-            <RelayLogo size="sm" />
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden text-[14px] leading-snug text-white antialiased bg-[radial-gradient(ellipse_at_top_left,_#0f1840_0%,_#070a18_45%,_#050814_100%)] lg:grid lg:grid-cols-[220px_1fr]">
+      <aside className="hidden lg:flex lg:h-full lg:min-h-0 flex-col border-r border-white/[0.08] bg-[rgba(8,13,28,0.95)] py-3 px-2.5 gap-0.5 overflow-y-auto">
+        <div className="admin-sidebar-top px-2 pb-3">
+          <p className="text-[9px] font-bold uppercase tracking-[0.22em] text-[#4e5a7a] mb-2">Staff Portal</p>
+          <div className="flex items-center gap-2.5 mb-2.5">
+            <RelayLogo size="sm" theme="dark" className="gap-2 [&>div]:!h-[30px] [&>div]:!w-[30px] [&>div]:!rounded-lg [&_svg]:!h-3.5 [&_svg]:!w-3.5 [&_span]:!text-base [&_span]:!font-extrabold [&_span]:!tracking-[-0.025em]" />
           </div>
-          <h1 className="text-xl font-bold mt-2">Admin Dashboard</h1>
-          <p className="text-sm text-[#7d86a8] mt-1">@{profile.username}</p>
+          <div className="flex items-center gap-2.5">
+            <div className="relative shrink-0">
+              <input
+                ref={staffAvatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => void onStaffAvatarPick(e)}
+              />
+              <div className="w-9 h-9 rounded-full overflow-hidden border border-white/[0.08] bg-[#1a2550] flex items-center justify-center text-xs font-bold text-white">
+                {profile.avatar_url ? (
+                  <img src={profile.avatar_url} alt={`${profile.username} avatar`} className="w-full h-full object-cover" />
+                ) : (
+                  profile.username.slice(0, 2).toUpperCase()
+                )}
+              </div>
+              {staffAvatarBusy ? (
+                <div
+                  className="absolute inset-0 flex items-center justify-center rounded-full bg-black/55 ring-1 ring-black/20"
+                  aria-live="polite"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin text-white" aria-hidden />
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => staffAvatarInputRef.current?.click()}
+                disabled={staffAvatarBusy}
+                className="absolute left-[95.18%] top-[95.18%] z-[1] flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/35 text-white shadow-sm backdrop-blur-sm hover:bg-black/50 hover:border-white/30 active:scale-95 disabled:pointer-events-none disabled:opacity-40 transition-colors"
+                aria-label="Change profile photo"
+                title="Change profile photo"
+              >
+                <Camera className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+              </button>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-white truncate">{profile.username}</p>
+              <p className="text-[11px] text-[#8892b0] truncate">
+                @{profile.username} · {staffRoleLabel}
+              </p>
+            </div>
+          </div>
         </div>
-        <nav className="space-y-2">
+        <nav className="flex flex-col gap-0.5 flex-1 min-h-0">
           {navItems.map((item) => {
             const Icon = item.icon
             const active = item.id === activeTab
@@ -859,18 +1893,17 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() => {
                   setActiveTab(item.id)
-                  if (item.id !== 'inbox') setSelectedConvoId(null)
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-left text-[13px] font-medium transition-all ${
                   active
-                    ? 'bg-[#1a2347] border-[#7b65ff]/80 text-white shadow-[0_10px_35px_-20px_rgba(123,101,255,0.9)]'
-                    : 'bg-[#101937] border-white/10 text-[#8f9ac0] hover:text-white hover:bg-[#141d3d]'
+                    ? 'border-[rgba(141,99,255,0.4)] bg-[rgba(141,99,255,0.1)] text-white shadow-[0_4px_16px_-8px_rgba(124,90,246,0.4)]'
+                    : 'border-transparent text-[#8892b0] hover:bg-white/[0.04] hover:text-[#c4cbe6]'
                 }`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="flex-1 text-left">{item.label}</span>
+                <Icon className="w-[15px] h-[15px] shrink-0 opacity-90" />
+                <span className="flex-1 min-w-0">{item.label}</span>
                 {item.id === 'inbox' && inboxUnreadTotal > 0 ? (
-                  <span className="shrink-0 min-w-[1.35rem] h-6 px-1.5 rounded-full bg-[#8d63ff] text-white text-[11px] font-bold flex items-center justify-center tabular-nums">
+                  <span className="shrink-0 min-w-4 h-4 px-1 rounded-full bg-[#8d63ff] text-white text-[9px] font-bold flex items-center justify-center tabular-nums">
                     {inboxUnreadTotal > 99 ? '99+' : inboxUnreadTotal}
                   </span>
                 ) : null}
@@ -881,49 +1914,57 @@ export default function DashboardPage() {
         <button
           type="button"
           onClick={() => void signOut()}
-          className="mt-auto flex items-center gap-2 text-[#aeb7d6] hover:text-white px-2 py-2"
+          className="mt-auto flex items-center gap-2 text-left text-[12px] text-[#4e5a7a] hover:text-[#c4cbe6] px-2.5 py-2 transition-colors"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className="w-3.5 h-3.5 shrink-0" />
           Sign out
         </button>
       </aside>
 
-      <main className="max-w-7xl w-full mx-auto p-4 sm:p-7 pb-24 lg:pb-8">
-        <header className="mb-5 space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-3 rounded-3xl border border-white/10 bg-[#0b132b]/85 backdrop-blur-xl px-5 py-5 sm:px-6">
-            <div className="space-y-1">
-              <h2 className="text-3xl font-bold">Dashboard</h2>
-              <p className="text-[#7d86a8] text-sm">
-                Relay Admin — {profile.business_role === 'admin' ? 'Admin' : 'Support Staff'}
+      <main className="flex flex-col min-h-0 w-full min-h-screen lg:min-h-0 lg:h-full overflow-hidden pb-[max(4.25rem,env(safe-area-inset-bottom))] lg:pb-0">
+        <header className="shrink-0 flex flex-wrap items-center gap-2.5 border-b border-white/[0.08] bg-[rgba(11,18,40,0.9)] backdrop-blur-md px-3 py-2.5 sm:px-4">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-[17px] font-bold tracking-[-0.02em] text-white leading-tight">{headerTitle}</h2>
+            <p className="text-[12px] text-[#8892b0] mt-0.5 leading-snug">{headerSub}</p>
+            {businessInfo?.slug ? (
+              <p className="text-[11px] text-[#4e5a7a] mt-1 font-mono truncate">
+                slug <span className="text-[#8892b0]">{businessInfo.slug}</span>
               </p>
-              {businessInfo ? (
-                <p className="text-[#9ea8cc] text-sm mt-1">
-                  Business: <span className="text-white font-medium">{businessInfo.name}</span>
-                  {businessInfo.slug ? (
-                    <span className="text-[#7d86a8]">
-                      {' '}
-                      · slug <code className="text-[#aeb7d6]">{businessInfo.slug}</code>
-                    </span>
-                  ) : null}
-                </p>
-              ) : profile.business_id ? (
-                <p className="text-amber-200/90 text-sm mt-1">Could not load business record — check businesses table for this business_id.</p>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void manualRefresh()}
-                disabled={dashRefreshing || !profile.business_id}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-[#121d3a] px-3.5 py-2 text-sm text-[#aeb7d6] hover:text-white disabled:opacity-40"
-              >
-                <RefreshCw className={`w-4 h-4 ${dashRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-            </div>
+            ) : null}
+            {!businessInfo && profile.business_id ? (
+              <p className="text-amber-200/90 text-xs mt-1">Could not load business record — check businesses table for this business_id.</p>
+            ) : null}
           </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => router.push('/notifications')}
+              className="relative inline-flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.06] text-[#c4cbe6] hover:bg-white/[0.10]"
+              aria-label="Alerts"
+            >
+              <Bell className="w-4 h-4" />
+              {staffNotifyUnread > 0 ? (
+                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-[#ff3b5c] text-white text-[9px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#0b1228]">
+                  {staffNotifyUnread > 99 ? '99+' : staffNotifyUnread}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => void manualRefresh()}
+              disabled={dashRefreshing || !profile.business_id}
+              className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
+            >
+              <RefreshCw className={`w-4 h-4 ${dashRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="mx-auto w-full max-w-7xl space-y-3 px-3 py-3 sm:px-4 sm:py-4">
           {loadError ? (
-            <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-[13px] text-red-200">
               <strong className="font-semibold">Data load issue:</strong> {loadError}
               <p className="text-red-200/80 text-xs mt-1">
                 For <code className="text-red-100">suspended</code> status or moderation log errors, run{' '}
@@ -932,17 +1973,16 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : null}
-        </header>
 
         {activeTab === 'home' ? (
-          <section className="space-y-4">
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+          <section className="space-y-3">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
               <StatCard icon={<User2 className="w-4 h-4" />} label="Pending" value={metrics.pending} accent="yellow" />
               <StatCard icon={<Inbox className="w-4 h-4" />} label="Threads" value={metrics.unread} accent="purple" />
               <StatCard icon={<ClipboardList className="w-4 h-4" />} label="Reports" value={metrics.reportCount} accent="red" />
               <StatCard icon={<Users className="w-4 h-4" />} label="Active members" value={metrics.members} accent="green" />
             </div>
-            <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <QuickButton icon={<User2 className="w-4 h-4" />} label="Review Queue" onClick={() => setActiveTab('users')} />
               <QuickButton
                 icon={<Inbox className="w-4 h-4" />}
@@ -956,13 +1996,13 @@ export default function DashboardPage() {
                 <QuickButton icon={<Send className="w-4 h-4" />} label="Send Notify" onClick={() => setActiveTab('notify')} />
               )}
             </div>
-            <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 backdrop-blur overflow-hidden shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
-              <div className="px-4 py-3 border-b border-white/10">
-                <h3 className="text-sm font-semibold tracking-wide text-[#9ea8cc]">RECENT CONVERSATIONS</h3>
+            <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/[0.08]">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8892b0]">Recent Conversations</h3>
               </div>
-              <div className="divide-y divide-white/10">
+              <div className="divide-y divide-white/[0.08]">
                 {convoList.length === 0 ? (
-                  <p className="px-4 py-6 text-sm text-[#7d86a8]">No customer threads yet.</p>
+                  <p className="px-3 py-5 text-[13px] text-[#8892b0]">No customer threads yet.</p>
                 ) : (
                   convoList.slice(0, 4).map((item) => (
                     <button
@@ -972,20 +2012,28 @@ export default function DashboardPage() {
                         setActiveTab('inbox')
                         void openThread(item.id)
                       }}
-                      className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-white/5 transition-colors"
+                      className="w-full text-left px-3 py-2.5 flex items-start gap-2 hover:bg-white/[0.03] transition-colors"
                     >
-                      <div className="w-10 h-10 rounded-xl bg-[#171f3e] flex items-center justify-center shrink-0 relative">
-                        <MessageCircle className="w-4 h-4 text-[#8d63ff]" />
+                      <div className="w-9 h-9 rounded-[10px] bg-[#131e3e] flex items-center justify-center shrink-0 relative overflow-hidden border border-white/[0.06] text-xs font-bold text-white">
+                        {item.customerAvatar ? (
+                          <img
+                            src={item.customerAvatar}
+                            alt={`${item.customerName} avatar`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          item.customerName.slice(0, 2).toUpperCase()
+                        )}
                         {item.unreadCount > 0 ? (
-                          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#ff3b5c] text-white text-[10px] font-bold flex items-center justify-center leading-none tabular-nums">
-                            {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                          <span className="absolute -top-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#050814]">
+                            {item.unreadCount > 9 ? '9+' : item.unreadCount}
                           </span>
                         ) : null}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{item.customerName}</p>
-                        <p className="text-sm text-[#7984a8] truncate">{item.preview}</p>
-                        <p className="text-xs text-[#5c647e] mt-0.5">{timeAgo(item.updated_at)}</p>
+                        <p className="text-[13px] font-semibold text-white truncate">{item.customerName}</p>
+                        <p className="text-[11px] text-[#8892b0] truncate max-w-[min(100%,240px)]">{item.preview}</p>
+                        <p className="text-[10px] text-[#4e5a7a] mt-0.5">{timeAgo(item.updated_at)}</p>
                       </div>
                     </button>
                   ))
@@ -996,30 +2044,27 @@ export default function DashboardPage() {
         ) : null}
 
         {activeTab === 'post' && isAdmin ? (
-          <section className="space-y-8 max-w-[700px]">
-            <div>
-              <h3 className="text-2xl font-bold">Post announcement</h3>
-              <p className="text-[#7d86a8] text-sm mt-1">
-                Goes to the public feed for all approved customers. They can like and comment. Approved customers get an in-app notification when you
-                publish.
-              </p>
-            </div>
+          <section className="space-y-3 max-w-4xl">
+            <p className="text-[12px] text-[#8892b0] leading-relaxed">
+              Goes to the public feed for all approved customers. They can like and comment. Approved customers get an in-app notification when you
+              publish.
+            </p>
 
-            <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 p-5 space-y-4 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
+            <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-3 space-y-3">
               <input type="file" ref={postFileInputRef} accept="image/*" className="hidden" onChange={onPostImagePick} />
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#8d63ff] to-[#5a7ff6] flex items-center justify-center">
                   <User2 className="w-5 h-5 text-white" />
                 </div>
                 <input
-                  className="flex-1 bg-[#111a31] border border-white/10 rounded-full px-4 py-3 text-sm outline-none focus:border-[#6f54ff] text-[#dce3f9] placeholder:text-[#8b97bf]"
+                  className="flex-1 bg-[#111a31] border border-white/10 rounded-full px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] text-[#dce3f9] placeholder:text-[#8b97bf]"
                   placeholder="What's on your mind?"
                   value={postBody}
                   onChange={(e) => setPostBody(e.target.value)}
                 />
               </div>
               <textarea
-                className="w-full bg-[#111a31] border border-white/10 rounded-2xl px-3 py-3 text-sm outline-none focus:border-[#6f54ff] min-h-24"
+                className="w-full bg-[#111a31] border border-white/10 rounded-2xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] min-h-20"
                 placeholder="Add more details (optional)"
                 value={postTitle}
                 onChange={(e) => setPostTitle(e.target.value)}
@@ -1051,7 +2096,7 @@ export default function DashboardPage() {
                 type="button"
                 disabled={postBusy || (!postBody.trim() && !postImage)}
                 onClick={() => void publishAnnouncement()}
-                className="w-full rounded-xl py-3 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
               >
                 {postBusy ? 'Publishing…' : 'Publish to feed & notify customers'}
               </button>
@@ -1071,15 +2116,22 @@ export default function DashboardPage() {
                   No announcements yet. Publish above — they will stack here like a timeline.
                 </p>
               ) : (
-                <ul className="space-y-4">
+                <ul className="space-y-3">
                   {myAnnouncements.map((a) => {
-                    const meta = myAnnouncementsMeta[a.id] || { likes: 0, comments: 0 }
+                    const meta = myAnnouncementsMeta[a.id] || {
+                      likes: 0,
+                      comments: 0,
+                      likedBy: [],
+                      commentedBy: [],
+                      commentPreviews: [],
+                      commentDetails: [],
+                    }
                     return (
                       <li
                         key={a.id}
-                        className="rounded-3xl border border-white/10 bg-[#0d1428]/90 overflow-hidden shadow-[0_16px_40px_-28px_rgba(30,49,112,0.95)]"
+                        className="rounded-2xl border border-white/10 bg-[#0d1428]/90 overflow-hidden shadow-[0_16px_40px_-28px_rgba(30,49,112,0.95)]"
                       >
-                        <div className="p-4">
+                        <div className="p-3">
                           <div className="flex items-center justify-between gap-2 text-xs text-[#7d86a8] mb-2">
                             <span>{timeAgo(a.created_at)}</span>
                             <span className="text-[#5c647e] font-mono text-[10px] truncate max-w-[40%]" title={a.id}>
@@ -1099,15 +2151,131 @@ export default function DashboardPage() {
                           </div>
                         ) : null}
                         <div className="flex items-center gap-4 px-4 py-3 border-t border-white/10 text-sm text-[#9ea8cc]">
-                          <span className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={meta.likes === 0}
+                            onClick={() =>
+                              setEngagementOpen((prev) =>
+                                prev?.postId === a.id && prev.mode === 'likes' ? null : { postId: a.id, mode: 'likes' }
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
                             <ThumbsUp className="w-4 h-4 text-[#8d63ff]" />
                             {meta.likes} likes
-                          </span>
-                          <span className="inline-flex items-center gap-1.5">
-                            <MessageCircle className="w-4 h-4 text-[#8d63ff]" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={meta.comments === 0}
+                            onClick={() =>
+                              setEngagementOpen((prev) =>
+                                prev?.postId === a.id && prev.mode === 'comments' ? null : { postId: a.id, mode: 'comments' }
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <RelayChatBubbleIcon className="text-[#8d63ff]" size={16} strokeWidth={2} />
                             {meta.comments} comments
-                          </span>
+                          </button>
                         </div>
+                        {engagementOpen?.postId === a.id ? (
+                          <div className="px-4 pb-4 border-t border-white/10">
+                            <div className="pt-3">
+                              <p className="text-sm font-semibold text-white mb-2">
+                                {engagementOpen.mode === 'likes' ? 'People who liked this post' : 'People who commented on this post'}
+                              </p>
+                              {engagementOpen.mode === 'likes' ? (
+                                meta.likedBy.length === 0 ? (
+                                  <p className="text-sm text-[#7d86a8]">No likes yet.</p>
+                                ) : (
+                                  <ul className="space-y-2">
+                                    {meta.likedBy.map((u, idx) => (
+                                      <li key={`${u.name}-${idx}`} className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#131d3d] px-3 py-2.5">
+                                        {u.avatar ? (
+                                          <img src={u.avatar} alt={`${u.name} avatar`} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                        ) : (
+                                          <div className="w-9 h-9 rounded-full bg-[#202b51] text-[11px] font-bold text-[#d8def3] border border-white/10 flex items-center justify-center">
+                                            {u.name.slice(0, 2).toUpperCase()}
+                                          </div>
+                                        )}
+                                        <p className="text-sm text-white font-medium">{u.name}</p>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )
+                              ) : meta.commentDetails.length === 0 ? (
+                                <p className="text-sm text-[#7d86a8]">No comments yet.</p>
+                              ) : (
+                                (() => {
+                                  const cBy = engagementCommentsByParent(meta.commentDetails)
+                                  const draftKey = (parentId: string) => `${a.id}::${parentId}`
+                                  function renderEngagementComment(c: EngagementComment): ReactNode {
+                                    const kids = cBy.get(c.id) || []
+                                    const dk = draftKey(c.id)
+                                    return (
+                                      <li key={c.id} className="flex items-start gap-2.5">
+                                        {c.userAvatar ? (
+                                          <img
+                                            src={c.userAvatar}
+                                            alt={`${c.userName} avatar`}
+                                            className="w-9 h-9 rounded-full object-cover border border-white/10 shrink-0"
+                                          />
+                                        ) : (
+                                          <div className="w-9 h-9 rounded-full bg-[#202b51] text-[11px] font-bold text-[#d8def3] border border-white/10 flex items-center justify-center shrink-0">
+                                            {c.userName.slice(0, 2).toUpperCase()}
+                                          </div>
+                                        )}
+                                        <div className="min-w-0 flex-1 space-y-2">
+                                          <div className="rounded-2xl border border-white/10 bg-[#131d3d] px-3 py-2">
+                                            <p className="text-sm text-white font-medium leading-tight">{c.userName}</p>
+                                            <p className="text-sm text-[#c4cbe6] mt-0.5 break-words whitespace-pre-wrap">{c.body}</p>
+                                            <p className="text-[11px] text-[#7d86a8] mt-1">{timeAgo(c.created_at)}</p>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <input
+                                              className="flex-1 min-w-[140px] rounded-xl border border-white/10 bg-[#111a31] px-2.5 py-2 text-xs text-white outline-none focus:border-[#6f54ff]"
+                                              placeholder={`Reply to ${c.userName}…`}
+                                              value={staffCommentReplyDrafts[dk] || ''}
+                                              onChange={(e) =>
+                                                setStaffCommentReplyDrafts((d) => ({ ...d, [dk]: e.target.value }))
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                  e.preventDefault()
+                                                  void submitStaffCommentReply(a.id, c.id)
+                                                }
+                                              }}
+                                            />
+                                            <button
+                                              type="button"
+                                              disabled={
+                                                staffReplyBusyPostId === a.id || !(staffCommentReplyDrafts[dk] || '').trim()
+                                              }
+                                              onClick={() => void submitStaffCommentReply(a.id, c.id)}
+                                              className="rounded-lg px-3 py-2 text-xs font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                                            >
+                                              {staffReplyBusyPostId === a.id ? '…' : 'Reply'}
+                                            </button>
+                                          </div>
+                                          {kids.length > 0 ? (
+                                            <ul className="space-y-2.5 border-l border-white/10 pl-3 ml-1">
+                                              {kids.map((k) => renderEngagementComment(k))}
+                                            </ul>
+                                          ) : null}
+                                        </div>
+                                      </li>
+                                    )
+                                  }
+                                  return (
+                                    <ul className="space-y-2.5">
+                                      {(cBy.get(null) || []).map((c) => renderEngagementComment(c))}
+                                    </ul>
+                                  )
+                                })()
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
                       </li>
                     )
                   })}
@@ -1119,136 +2287,604 @@ export default function DashboardPage() {
 
         {activeTab === 'inbox' ? (
           <section className="space-y-3">
-            {selectedConvoId ? (
-              <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 min-h-[34px]">
+                {inboxUnreadTotal > 0 ? (
+                  <span className="text-[10px] font-bold text-[#8d63ff] bg-[rgba(141,99,255,0.2)] border border-[rgba(141,99,255,0.35)] rounded-md px-1.5 py-px tabular-nums">
+                    {inboxUnreadTotal} new
+                  </span>
+                ) : null}
+                <span className="text-[11px] text-[#8892b0] tabular-nums">
+                  {inboxSearchQuery.trim() || inboxThreadLabelFilterIds.length > 0
+                    ? `${inboxDisplayList.length} of ${convoList.length} threads`
+                    : `${convoList.length} threads`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedConvoId(null)
-                    setThreadMessages([])
-                  }}
-                  className="inline-flex items-center gap-2 text-sm text-[#9ea8cc] hover:text-white"
+                  onClick={() => void refreshInbox()}
+                  disabled={inboxRefreshing || !profile.business_id}
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
                 >
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to threads
+                  <RefreshCw className={`w-4 h-4 ${inboxRefreshing ? 'animate-spin' : ''}`} />
+                  Refresh inbox
                 </button>
-                <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 min-h-[280px] max-h-[50vh] overflow-y-auto p-3.5 space-y-2 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
-                  {threadLoading ? (
-                    <div className="flex justify-center py-12">
-                      <Loader2 className="w-6 h-6 animate-spin text-[#8d63ff]" />
+              </div>
+            </div>
+
+            {convoList.length === 0 ? (
+              loadError ? (
+                <p className="text-sm text-red-300/90 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
+                  Threads could not load — see the error banner above. Staff must have{' '}
+                  <code className="text-red-200">profiles.business_id</code> matching conversations for this business.
+                </p>
+              ) : (
+                <p className="text-sm text-[#7d86a8]">
+                  When approved customers message your business from the feed, threads show here. Open Support on an announcement to start a
+                  conversation.
+                </p>
+              )
+            ) : (
+              <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden lg:grid lg:grid-cols-[minmax(220px,1fr)_minmax(0,1.75fr)] lg:h-[min(calc(100dvh-7.25rem),920px)] lg:min-h-0">
+                <aside className="border-r border-white/[0.08] flex flex-col min-h-0 max-h-[44vh] lg:max-h-none lg:h-full">
+                  <div className="p-2.5 border-b border-white/[0.08] shrink-0">
+                    <div className="relative rounded-xl border border-white/[0.08] bg-[#0f1834]">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5c647e]" aria-hidden />
+                      <input
+                        type="search"
+                        className="w-full rounded-xl bg-transparent py-2 pl-8 pr-2 text-[13px] text-[#e2e6f5] placeholder:text-[#5c647e] outline-none focus:ring-1 focus:ring-[#6f54ff]/40"
+                        placeholder="Name, @user, preview, label…"
+                        value={inboxSearchQuery}
+                        onChange={(e) => setInboxSearchQuery(e.target.value)}
+                        aria-label="Search threads"
+                      />
                     </div>
-                  ) : threadMessages.length === 0 ? (
-                    <p className="text-sm text-[#7d86a8] py-6 text-center">No messages yet. Say hello below.</p>
-                  ) : (
-                    threadMessages.map((m) => {
-                      const mine = m.sender_id === profile.id
-                      return (
-                        <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                          <div
-                            className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                              mine ? 'bg-[#6f54ff] text-white' : 'bg-[#151d39] text-[#e2e6f5]'
-                            }`}
+                    {inboxLabelCatalog.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="text-[10px] text-[#5c647e] w-full">Filter by label (any match)</span>
+                        {inboxLabelCatalog.map((lbl) => {
+                          const on = inboxThreadLabelFilterIds.includes(lbl.id)
+                          return (
+                            <button
+                              key={lbl.id}
+                              type="button"
+                              onClick={() => toggleInboxThreadLabelFilter(lbl.id)}
+                              className={`inline-flex max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                                on ? 'ring-1 ring-[#8d63ff]/50' : 'opacity-80 hover:opacity-100'
+                              }`}
+                              style={inboxLabelChipStyle(lbl.color)}
+                            >
+                              {lbl.name}
+                            </button>
+                          )
+                        })}
+                        {inboxThreadLabelFilterIds.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setInboxThreadLabelFilterIds([])}
+                            className="text-[10px] font-medium text-[#8d63ff] hover:underline px-1"
                           >
-                            {m.image_url ? (
-                              <img src={m.image_url} alt="" className="rounded-lg max-h-40 mb-1 w-full object-cover" />
+                            Clear labels
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.08] max-h-[44vh] lg:max-h-none">
+                    {inboxDisplayList.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-[13px] text-[#7d86a8]">
+                        {convoList.length === 0
+                          ? 'No threads.'
+                          : 'No threads match your search or label filters.'}
+                      </p>
+                    ) : (
+                    inboxDisplayList.map((item) => {
+                      const active = selectedConvoId === item.id
+                      return (
+                        <button
+                          type="button"
+                          key={item.id}
+                          onClick={() => void openThread(item.id)}
+                          className={`w-full text-left px-3 py-2.5 flex gap-2 items-start transition-colors ${
+                            active ? 'bg-[rgba(141,99,255,0.07)]' : 'hover:bg-white/[0.03]'
+                          }`}
+                        >
+                          <div className="w-9 h-9 rounded-[10px] bg-[#131e3e] flex items-center justify-center text-[12px] font-bold shrink-0 relative overflow-hidden border border-white/[0.06] text-white">
+                            {item.customerAvatar ? (
+                              <img src={item.customerAvatar} alt={`${item.customerName} avatar`} className="w-full h-full object-cover" />
+                            ) : (
+                              item.customerName.slice(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[13px] font-semibold text-white truncate">{item.customerName}</p>
+                              <div className="shrink-0 text-right">
+                                <p className="text-[10px] text-[#4e5a7a]">{timeAgo(item.updated_at)}</p>
+                                {item.unreadCount > 0 ? (
+                                  <span className="inline-flex mt-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold items-center justify-center tabular-nums border-2 border-[#050814]">
+                                    {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-[#8892b0] truncate">@{item.customerUsername}</p>
+                            <p className="text-[11px] text-[#8892b0] truncate mt-0.5 max-w-[min(100%,220px)]">{item.preview}</p>
+                            {item.labels.length > 0 ? (
+                              <div className="flex flex-wrap gap-1 mt-1.5 max-w-[min(100%,220px)]">
+                                {item.labels.slice(0, 4).map((l) => (
+                                  <span
+                                    key={l.id}
+                                    className="inline-flex max-w-full truncate rounded px-1 py-px text-[9px] font-semibold border"
+                                    style={inboxLabelChipStyle(l.color)}
+                                  >
+                                    {l.name}
+                                  </span>
+                                ))}
+                                {item.labels.length > 4 ? (
+                                  <span className="text-[9px] text-[#5c647e] font-medium">+{item.labels.length - 4}</span>
+                                ) : null}
+                              </div>
                             ) : null}
-                            <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                            <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-[#7d86a8]'}`}>
-                              {timeAgo(m.created_at)}
+                          </div>
+                        </button>
+                      )
+                    })
+                    )}
+                  </div>
+                </aside>
+
+                <div className="flex flex-col relative flex-1 min-h-[260px] max-h-[48vh] lg:min-h-0 lg:max-h-none lg:h-full">
+                  {selectedConvo ? (
+                    <>
+                      <div className="px-3 py-2.5 border-b border-white/[0.08] shrink-0 space-y-2">
+                        <div className="flex items-center gap-2 justify-between">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-[#d12f2f] overflow-hidden flex items-center justify-center text-[11px] font-bold text-white shrink-0">
+                              {selectedConvo.customerAvatar ? (
+                                <img src={selectedConvo.customerAvatar} alt={`${selectedConvo.customerName} avatar`} className="w-full h-full object-cover" />
+                              ) : (
+                                selectedConvo.customerName.slice(0, 2).toUpperCase()
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold text-white truncate">{selectedConvo.customerName}</p>
+                              <p className="text-[11px] text-[#8892b0] truncate">@{selectedConvo.customerUsername} · Customer</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-0.5 shrink-0 relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInboxContactOpen(false)
+                                setInboxLabelsPopoverOpen((v) => !v)
+                              }}
+                              className={`p-2 rounded-lg hover:bg-white/10 ${
+                                inboxLabelsPopoverOpen ? 'text-white bg-white/10' : 'text-[#9ea8cc] hover:text-white'
+                              }`}
+                              aria-expanded={inboxLabelsPopoverOpen}
+                              aria-label="Labels"
+                            >
+                              <Tag className="w-5 h-5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInboxLabelsPopoverOpen(false)
+                                setInboxContactOpen((v) => !v)
+                              }}
+                              className="p-2 rounded-lg text-[#9ea8cc] hover:text-white hover:bg-white/10"
+                              aria-label="Open contact profile"
+                            >
+                              <MoreHorizontal className="w-5 h-5" />
+                            </button>
+                            {inboxLabelsPopoverOpen ? (
+                              <div
+                                ref={inboxLabelsPopoverRef}
+                                className="absolute right-0 top-[calc(100%+6px)] z-30 w-[min(calc(100vw-2rem),320px)] rounded-2xl border border-white/10 bg-[#101937] shadow-[0_20px_40px_-25px_rgba(0,0,0,0.85)] overflow-hidden"
+                              >
+                                <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
+                                  <p className="text-[13px] font-semibold text-white">Labels</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setInboxLabelsPopoverOpen(false)}
+                                    className="p-1 rounded-md text-[#9ea8cc] hover:text-white hover:bg-white/10"
+                                    aria-label="Close labels"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                                <div className="max-h-[min(50vh,280px)] overflow-y-auto p-2 space-y-0.5">
+                                  {inboxLabelCatalog.length === 0 ? (
+                                    <p className="text-xs text-[#7d86a8] px-2 py-3">
+                                      No labels yet. Run the inbox labels migration in Supabase, then refresh.
+                                    </p>
+                                  ) : (
+                                    inboxLabelCatalog.map((def) => {
+                                      const on = selectedConvo.labels.some((l) => l.id === def.id)
+                                      const busy = inboxLabelRowBusy === def.id
+                                      return (
+                                        <div
+                                          key={def.id}
+                                          className="flex items-center gap-1 rounded-lg px-1.5 py-1 hover:bg-white/[0.04]"
+                                        >
+                                          <button
+                                            type="button"
+                                            disabled={busy || !selectedConvoId}
+                                            onClick={() => void applyInboxLabelOnThread(def.id, !on, def)}
+                                            className="flex-1 min-w-0 flex items-center gap-2 text-left rounded-md px-2 py-1.5 text-[13px] text-[#e2e6f5] disabled:opacity-40"
+                                          >
+                                            <span
+                                              className="w-4 h-4 rounded border shrink-0 flex items-center justify-center text-[10px] font-bold"
+                                              style={inboxLabelChipStyle(def.color)}
+                                            >
+                                              {on ? '✓' : ''}
+                                            </span>
+                                            <span className="truncate">{def.name}</span>
+                                            {def.is_system ? (
+                                              <span className="text-[9px] text-[#5c647e] shrink-0 font-medium">preset</span>
+                                            ) : null}
+                                          </button>
+                                          {!def.is_system ? (
+                                            <button
+                                              type="button"
+                                              disabled={busy}
+                                              onClick={() => void deleteInboxLabelDefinition(def.id)}
+                                              className="p-1.5 rounded-md text-[#9ea8cc] hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                                              aria-label={`Delete label ${def.name}`}
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      )
+                                    })
+                                  )}
+                                </div>
+                                <div className="p-2 border-t border-white/10 space-y-2 bg-[#0c1428]">
+                                  <p className="text-[10px] uppercase tracking-wide text-[#5c647e] font-semibold px-1">New label</p>
+                                  <div className="flex gap-1.5">
+                                    <input
+                                      className="flex-1 min-w-0 bg-[#111a31] border border-white/10 rounded-lg px-2.5 py-2 text-[13px] outline-none focus:border-[#6f54ff]/50"
+                                      placeholder="e.g. Refund"
+                                      value={newInboxLabelName}
+                                      onChange={(e) => setNewInboxLabelName(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault()
+                                          void createInboxLabelFromDraft()
+                                        }
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={inboxLabelCreateBusy || !newInboxLabelName.trim()}
+                                      onClick={() => void createInboxLabelFromDraft()}
+                                      className="shrink-0 rounded-lg px-3 py-2 text-[12px] font-semibold bg-white/10 text-white hover:bg-white/[0.14] disabled:opacity-40"
+                                    >
+                                      {inboxLabelCreateBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                        {selectedConvo.labels.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 items-center pl-[42px]">
+                            {selectedConvo.labels.map((l) => (
+                              <button
+                                key={l.id}
+                                type="button"
+                                disabled={inboxLabelRowBusy === l.id}
+                                onClick={() => void applyInboxLabelOnThread(l.id, false, l)}
+                                className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold max-w-[200px] group disabled:opacity-40"
+                                style={inboxLabelChipStyle(l.color)}
+                                title="Remove label"
+                              >
+                                <span className="truncate">{l.name}</span>
+                                <X className="w-3 h-3 shrink-0 opacity-70 group-hover:opacity-100" />
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-[#5c647e] pl-[42px]">No labels — use the tag icon to add some.</p>
+                        )}
+                      </div>
+                      {inboxContactOpen ? (
+                        <div className="absolute top-[62px] right-3 z-20 w-[280px] rounded-2xl border border-white/10 bg-[#101937] p-4 space-y-3 shadow-[0_20px_40px_-25px_rgba(0,0,0,0.8)]">
+                          <p className="text-sm font-semibold text-white">Contact profile</p>
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-full bg-[#6f54ff] overflow-hidden flex items-center justify-center font-bold">
+                              {selectedConvo.customerAvatar ? (
+                                <img src={selectedConvo.customerAvatar} alt={`${selectedConvo.customerName} avatar`} className="w-full h-full object-cover" />
+                              ) : (
+                                selectedConvo.customerName.slice(0, 2).toUpperCase()
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-white truncate">{selectedConvo.customerName}</p>
+                              <p className="text-xs text-[#7d86a8] truncate">@{selectedConvo.customerUsername}</p>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t border-white/10 text-xs text-[#7d86a8] space-y-1">
+                            <p>Conversation ID</p>
+                            <p className="text-[#aeb7d6] font-mono truncate" title={selectedConvo.id}>
+                              {selectedConvo.id}
                             </p>
                           </div>
                         </div>
-                      )
-                    })
+                      ) : null}
+                      <div ref={threadScrollRef} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+                        {threadLoading ? (
+                          <div className="flex justify-center py-12">
+                            <Loader2 className="w-6 h-6 animate-spin text-[#8d63ff]" />
+                          </div>
+                        ) : threadMessages.length === 0 ? (
+                          <p className="text-sm text-[#7d86a8] py-6 text-center">No messages yet. Say hello below.</p>
+                        ) : (
+                          threadMessages.map((m, i) => {
+                            const mine = m.sender_id === profile.id
+                            const showText = Boolean(m.body?.trim()) && m.body !== '📷'
+                            const showSeen =
+                              m.read === true &&
+                              m.read_at &&
+                              ((mine && i === threadSeenIndexes.lastStaff) || (!mine && i === threadSeenIndexes.lastOther))
+                            return (
+                              <div key={m.id} className={`flex flex-col w-full min-w-0 ${mine ? 'items-end' : 'items-start'}`}>
+                                <div className={`flex w-full min-w-0 ${mine ? 'justify-end' : 'justify-start'}`}>
+                                  <div
+                                    className={`w-fit max-w-[min(85%,24rem)] shrink-0 rounded-2xl px-3 py-2 text-sm ${
+                                      mine ? 'bg-[#6f54ff] text-white' : 'bg-[#151d39] text-[#e2e6f5]'
+                                    }`}
+                                  >
+                                    {m.image_url ? (
+                                      <img src={m.image_url} alt="" className="rounded-lg max-h-40 mb-1 max-w-full w-full object-cover" />
+                                    ) : null}
+                                    {showText ? <p className="whitespace-pre-wrap break-words">{m.body}</p> : null}
+                                    <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-[#7d86a8]'}`}>
+                                      {timeAgo(m.created_at)}
+                                    </p>
+                                  </div>
+                                </div>
+                                {showSeen ? (
+                                  <p className="text-[11px] text-[#7d86a8] mt-1 px-1">Seen · {timeAgo(m.read_at!)}</p>
+                                ) : null}
+                              </div>
+                            )
+                          })
+                        )}
+                        <div ref={threadEndRef} className="h-px w-full" aria-hidden />
+                      </div>
+                      <div className="p-2.5 border-t border-white/10 space-y-2 shrink-0">
+                        <input
+                          ref={replyImageInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="hidden"
+                          onChange={onReplyImagePick}
+                        />
+                        {replyPendingImage ? (
+                          <div className="relative rounded-xl overflow-hidden border border-white/10 max-h-32 w-fit max-w-full">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={replyPendingImage.previewUrl}
+                              alt="Attachment preview"
+                              className="max-h-32 w-auto max-w-full object-contain bg-[#0a1020]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => clearReplyPendingImage()}
+                              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center text-xs hover:bg-black/80"
+                              aria-label="Remove photo"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="flex gap-2 items-end">
+                          <button
+                            type="button"
+                            onClick={() => replyImageInputRef.current?.click()}
+                            disabled={replyBusy}
+                            className="shrink-0 p-2.5 rounded-xl border border-white/10 bg-[#111a31] text-[#aeb7d6] hover:text-white hover:border-[#6f54ff]/50 disabled:opacity-40"
+                            aria-label="Attach image"
+                          >
+                            <ImagePlus className="w-5 h-5" />
+                          </button>
+                          <div className="relative shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInboxLabelsPopoverOpen(false)
+                                setInboxContactOpen(false)
+                                setCannedPickerQuery('')
+                                setCannedPopoverOpen((v) => !v)
+                              }}
+                              disabled={replyBusy}
+                              className={`p-2.5 rounded-xl border border-white/10 bg-[#111a31] disabled:opacity-40 ${
+                                cannedPopoverOpen
+                                  ? 'text-white border-[#6f54ff]/50'
+                                  : 'text-[#aeb7d6] hover:text-white hover:border-[#6f54ff]/50'
+                              }`}
+                              aria-expanded={cannedPopoverOpen}
+                              aria-label="Quick replies"
+                            >
+                              <BookMarked className="w-5 h-5" />
+                            </button>
+                            {cannedPopoverOpen ? (
+                              <div
+                                ref={cannedPopoverRef}
+                                className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-[min(calc(100vw-2rem),360px)] max-h-[min(70vh,420px)] overflow-hidden rounded-2xl border border-white/10 bg-[#101937] shadow-[0_20px_40px_-25px_rgba(0,0,0,0.85)] flex flex-col"
+                              >
+                                <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 shrink-0">
+                                  <p className="text-[13px] font-semibold text-white">Quick replies</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setCannedPopoverOpen(false)}
+                                    className="rounded-md p-1 text-[#9ea8cc] hover:bg-white/10 hover:text-white"
+                                    aria-label="Close quick replies"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                                <div className="px-2 py-2 border-b border-white/10 shrink-0">
+                                  <input
+                                    className="w-full rounded-lg border border-white/10 bg-[#0c1428] px-2.5 py-2 text-[12px] text-[#e2e6f5] outline-none focus:border-[#6f54ff]/50"
+                                    placeholder="Filter saved replies…"
+                                    value={cannedPickerQuery}
+                                    onChange={(e) => setCannedPickerQuery(e.target.value)}
+                                  />
+                                </div>
+                                <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+                                  {filteredCannedPickerList.length === 0 ? (
+                                    <p className="px-2 py-4 text-center text-[12px] text-[#7d86a8]">
+                                      {cannedReplies.length === 0
+                                        ? 'No saved replies yet. Add one below (requires inbox_canned_replies migration).'
+                                        : 'No matches.'}
+                                    </p>
+                                  ) : (
+                                    filteredCannedPickerList.map((r) => (
+                                      <div
+                                        key={r.id}
+                                        className="rounded-xl border border-white/[0.06] bg-[#0c1428] p-2.5 space-y-2"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="text-[12px] font-semibold text-white truncate">{r.title}</p>
+                                          <p className="text-[11px] text-[#8892b0] line-clamp-2 whitespace-pre-wrap break-words">
+                                            {r.body}
+                                          </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                          <button
+                                            type="button"
+                                            disabled={replyBusy}
+                                            onClick={() => insertCannedReplyIntoDraft(r)}
+                                            className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+                                          >
+                                            Insert
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={cannedDeleteBusyId === r.id}
+                                            onClick={() => beginEditCanned(r)}
+                                            className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1.5 text-[11px] font-medium text-[#c4cbe6] hover:bg-white/[0.06]"
+                                          >
+                                            <Pencil className="w-3 h-3" />
+                                            Edit
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={cannedDeleteBusyId === r.id}
+                                            onClick={() => void deleteCannedReply(r.id)}
+                                            className="inline-flex items-center gap-1 rounded-lg border border-red-500/25 px-2 py-1.5 text-[11px] font-medium text-red-300/90 hover:bg-red-500/10 disabled:opacity-40"
+                                          >
+                                            {cannedDeleteBusyId === r.id ? (
+                                              <Loader2 className="w-3 h-3 animate-spin" />
+                                            ) : (
+                                              <Trash2 className="w-3 h-3" />
+                                            )}
+                                            Delete
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                                <div className="border-t border-white/10 bg-[#0c1428] p-2.5 space-y-2 shrink-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#5c647e] px-0.5">
+                                    {cannedEditId ? 'Edit quick reply' : 'New quick reply'}
+                                  </p>
+                                  <input
+                                    className="w-full rounded-lg border border-white/10 bg-[#111a31] px-2.5 py-2 text-[12px] text-[#e2e6f5] outline-none focus:border-[#6f54ff]/50"
+                                    placeholder="Short title (e.g. Thanks — investigating)"
+                                    value={cannedFormTitle}
+                                    onChange={(e) => setCannedFormTitle(e.target.value)}
+                                  />
+                                  <textarea
+                                    className="w-full min-h-[88px] resize-y rounded-lg border border-white/10 bg-[#111a31] px-2.5 py-2 text-[12px] text-[#e2e6f5] outline-none focus:border-[#6f54ff]/50"
+                                    placeholder="Message body… Use placeholders: {customer_name}, {username}, {business}"
+                                    value={cannedFormBody}
+                                    onChange={(e) => setCannedFormBody(e.target.value)}
+                                  />
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={cannedSaveBusy}
+                                      onClick={() => void saveCannedReplyForm()}
+                                      className="rounded-lg bg-white/10 px-3 py-2 text-[12px] font-semibold text-white hover:bg-white/[0.14] disabled:opacity-40"
+                                    >
+                                      {cannedSaveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : cannedEditId ? 'Save changes' : 'Save reply'}
+                                    </button>
+                                    {cannedEditId ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => cancelCannedForm()}
+                                        className="rounded-lg border border-white/10 px-3 py-2 text-[12px] font-medium text-[#c4cbe6] hover:bg-white/[0.06]"
+                                      >
+                                        Cancel edit
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          <input
+                            className="flex-1 min-w-0 bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]"
+                            placeholder="Reply or add a caption…"
+                            value={replyDraft}
+                            onChange={(e) => setReplyDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault()
+                                void sendReply()
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={replyBusy || (!replyDraft.trim() && !replyPendingImage)}
+                            onClick={() => void sendReply()}
+                            className="shrink-0 rounded-xl px-3.5 py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                          >
+                            Send
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-[#5c647e]">
+                          Photos only (no video). Quick replies support {'{customer_name}'}, {'{username}'}, and {'{business}'} in the saved
+                          message.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-full flex items-center justify-center px-5 text-center text-[#7d86a8] text-sm">
+                      Select a conversation from the left to open thread details.
+                    </div>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <input
-                    className="flex-1 bg-[#111a31] border border-white/10 rounded-xl px-3 py-3 text-sm outline-none focus:border-[#6f54ff]"
-                    placeholder="Reply…"
-                    value={replyDraft}
-                    onChange={(e) => setReplyDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        void sendReply()
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={replyBusy || !replyDraft.trim()}
-                    onClick={() => void sendReply()}
-                    className="rounded-xl px-4 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
-                  >
-                    Send
-                  </button>
-                </div>
+
               </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-2xl font-bold">Inbox</h3>
-                    {inboxUnreadTotal > 0 ? (
-                      <span className="text-xs font-semibold text-[#b8a6ff] bg-[#8d63ff]/20 border border-[#8d63ff]/35 rounded-full px-2.5 py-0.5 tabular-nums">
-                        {inboxUnreadTotal} new
-                      </span>
-                    ) : null}
-                  </div>
-                  <span className="text-xs text-[#7d86a8]">{convoList.length} threads</span>
-                </div>
-                {convoList.length === 0 ? (
-                  loadError ? (
-                    <p className="text-sm text-red-300/90 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
-                      Threads could not load — see the error banner above. Staff must have{' '}
-                      <code className="text-red-200">profiles.business_id</code> matching conversations for your Vatican business.
-                    </p>
-                  ) : (
-                    <p className="text-sm text-[#7d86a8]">
-                      When approved customers message your business from the feed, threads show here. Open Support on an announcement to start a
-                      conversation.
-                    </p>
-                  )
-                ) : (
-                  convoList.map((item) => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      onClick={() => void openThread(item.id)}
-                      className="w-full rounded-2xl border border-[#4f43aa]/40 bg-[#0e1528]/90 px-4 py-3 flex gap-3 items-center text-left hover:border-[#6f54ff]/50 transition-all hover:-translate-y-0.5"
-                    >
-                      <div className="w-12 h-12 rounded-full bg-[#6f54ff] flex items-center justify-center font-bold shrink-0 relative">
-                        {item.customerName.slice(0, 2).toUpperCase()}
-                        {item.unreadCount > 0 ? (
-                          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#ff3b5c] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0e1528] tabular-nums">
-                            {item.unreadCount > 99 ? '99+' : item.unreadCount}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-semibold truncate">{item.customerName}</p>
-                          <p className="text-xs text-[#7d86a8] shrink-0">{timeAgo(item.updated_at)}</p>
-                        </div>
-                        <p className="text-[#7d86a8] text-sm truncate">@{item.customerUsername}</p>
-                        <p className="text-[#aeb7d6] text-sm truncate mt-0.5">{item.preview}</p>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </>
             )}
           </section>
         ) : null}
 
         {activeTab === 'users' ? (
-          <section className="space-y-6">
-            <div>
-              <h3 className="text-2xl font-bold">Users</h3>
-              <p className="text-[#7d86a8] text-sm mt-1">
-                Approve new signups and manage active members for your business. Pending customers cannot use the app until approved.
-              </p>
+          <section className="space-y-4">
+            <p className="text-[12px] text-[#8892b0] leading-relaxed">
+              Approve new signups and manage active members for your business. Pending customers cannot use the app until approved.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <StatCard icon={<User2 className="w-4 h-4" />} label="Pending" value={pendingCustomers.length} accent="yellow" />
+              <StatCard icon={<Users className="w-4 h-4" />} label="Active" value={activeMembers.length} accent="green" />
+              <StatCard icon={<Ban className="w-4 h-4" />} label="Suspended" value={suspendedMembers.length} accent="red" />
+              <StatCard
+                icon={<ClipboardList className="w-4 h-4" />}
+                label="Total managed"
+                value={pendingCustomers.length + activeMembers.length + suspendedMembers.length}
+                accent="purple"
+              />
             </div>
             {!isAdmin ? (
               <p className="text-amber-200/90 text-sm rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
@@ -1256,141 +2892,226 @@ export default function DashboardPage() {
               </p>
             ) : null}
 
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Pending approval</h4>
-              <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 p-3 sm:p-4 space-y-3 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
-                {pendingCustomers.length === 0 ? (
-                  <p className="text-sm text-[#7d86a8] py-4 text-center">No pending signups.</p>
-                ) : (
-                  pendingCustomers.map((cust) => (
-                    <article key={cust.id} className="rounded-2xl border border-white/10 bg-[#121d3a] p-3.5 space-y-3">
-                      <div>
-                        <p className="font-semibold">
-                          {`${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || cust.username}
-                        </p>
-                        <p className="text-[#7d86a8] text-sm">
-                          @{cust.username} · joined {timeAgo(cust.created_at)}
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          disabled={!isAdmin || reviewBusyId === cust.id}
-                          onClick={() => void reviewCustomer(cust.id, 'approve')}
-                          className="rounded-xl py-2 font-semibold bg-emerald-500/90 hover:bg-emerald-500 disabled:opacity-40"
-                        >
-                          {reviewBusyId === cust.id ? '…' : 'Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!isAdmin || reviewBusyId === cust.id}
-                          onClick={() => void reviewCustomer(cust.id, 'reject')}
-                          className="rounded-xl py-2 font-semibold bg-red-500/90 hover:bg-red-500 disabled:opacity-40"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!isAdmin || reviewBusyId === cust.id}
-                          onClick={() => void reviewCustomer(cust.id, 'block')}
-                          className="rounded-xl py-2 font-semibold bg-white/10 hover:bg-white/15 disabled:opacity-40"
-                        >
-                          Block
-                        </button>
-                      </div>
-                    </article>
-                  ))
-                )}
+            <div className="space-y-3">
+              <div className="flex gap-0.5 rounded-[10px] bg-[#0f1834] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setUsersPanelTab('pending')}
+                  className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
+                    usersPanelTab === 'pending' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                  }`}
+                >
+                  Pending ({pendingCustomers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUsersPanelTab('active')}
+                  className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
+                    usersPanelTab === 'active' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                  }`}
+                >
+                  Active ({activeMembers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUsersPanelTab('suspended')}
+                  className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
+                    usersPanelTab === 'suspended' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                  }`}
+                >
+                  Suspended ({suspendedMembers.length})
+                </button>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Active members</h4>
-              <p className="text-[#7d86a8] text-xs">
-                Customers approved for the platform who follow your business or have a support thread with you.
-              </p>
-              <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 divide-y divide-white/10 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
-                {activeMembers.length === 0 ? (
-                  <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">
-                    No active members linked to this business yet — approve customers and have them follow or message you.
+              {usersPanelTab === 'pending' ? (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Pending approval</h4>
+                  <div className="rounded-2xl border border-white/10 bg-[#0d1428]/90 p-2.5 sm:p-3 space-y-2.5 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
+                    {pendingCustomers.length === 0 ? (
+                      <p className="text-sm text-[#7d86a8] py-4 text-center">No pending signups.</p>
+                    ) : (
+                      pendingCustomers.map((cust) => (
+                        <article key={cust.id} className="rounded-xl border border-white/10 bg-[#121d3a] p-3 space-y-2.5">
+                          <div>
+                            <p className="font-semibold">
+                              {`${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || cust.username}
+                            </p>
+                            <p className="text-[#7d86a8] text-sm">
+                              @{cust.username} · joined {timeAgo(cust.created_at)}
+                            </p>
+                            <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-[#9ea8cc]">
+                              <p className="break-all">
+                                <span className="text-[#7d86a8]">Username:</span> @{cust.username}
+                              </p>
+                              <p className="break-all">
+                                <span className="text-[#7d86a8]">Email:</span>{' '}
+                                {cust.email ? (
+                                  <>
+                                    {cust.email}
+                                    <span
+                                      className={`ml-1 inline-block rounded-full px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wide ${
+                                        cust.email_verified
+                                          ? 'bg-emerald-500/15 text-emerald-300'
+                                          : 'bg-amber-500/15 text-amber-300'
+                                      }`}
+                                    >
+                                      {cust.email_verified ? 'Verified' : 'Unverified'}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-[#7d86a8]">—</span>
+                                )}
+                              </p>
+                              <p className="break-all">
+                                <span className="text-[#7d86a8]">Phone:</span>{' '}
+                                {cust.phone?.trim() ? cust.phone : <span className="text-[#7d86a8]">—</span>}
+                              </p>
+                              <p className="break-all">
+                                <span className="text-[#7d86a8]">Referral:</span>{' '}
+                                {cust.referral_username ? (
+                                  `@${cust.referral_username}`
+                                ) : (
+                                  <span className="text-[#7d86a8]">—</span>
+                                )}
+                              </p>
+                              <p className="break-all sm:col-span-2">
+                                <span className="text-[#7d86a8]">Signed up:</span>{' '}
+                                {new Date(cust.created_at).toLocaleString()} ({timeAgo(cust.created_at)})
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              type="button"
+                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              onClick={() => void reviewCustomer(cust.id, 'approve')}
+                              className="rounded-xl py-2 font-semibold bg-emerald-500/90 hover:bg-emerald-500 disabled:opacity-40"
+                            >
+                              {reviewBusyId === cust.id ? '…' : 'Approve'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              onClick={() => void reviewCustomer(cust.id, 'reject')}
+                              className="rounded-xl py-2 font-semibold bg-red-500/90 hover:bg-red-500 disabled:opacity-40"
+                            >
+                              Reject
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              onClick={() => void reviewCustomer(cust.id, 'block')}
+                              className="rounded-xl py-2 font-semibold bg-white/10 hover:bg-white/15 disabled:opacity-40"
+                            >
+                              Block
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {usersPanelTab === 'active' ? (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Active members</h4>
+                  <p className="text-[#7d86a8] text-xs">
+                    Customers approved for the platform who follow your business or have a support thread with you.
                   </p>
-                ) : (
-                  activeMembers.map((m) => {
-                    const label = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
-                    return (
-                      <div key={m.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">{label}</p>
-                          <p className="text-sm text-[#7d86a8] truncate">@{m.username}</p>
-                        </div>
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            disabled={modBusyId === m.id}
-                            onClick={() => void moderateSuspension(m.id, 'suspend', label)}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
-                          >
-                            <Ban className="w-4 h-4 shrink-0" />
-                            {modBusyId === m.id ? '…' : 'Suspend'}
-                          </button>
-                        ) : null}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </div>
+                  <div className="rounded-2xl border border-white/10 bg-[#0d1428]/90 divide-y divide-white/10 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)] max-h-[380px] overflow-y-auto">
+                    {activeMembers.length === 0 ? (
+                      <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">
+                        No active members linked to this business yet — approve customers and have them follow or message you.
+                      </p>
+                    ) : (
+                      activeMembers.map((m) => {
+                        const label = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
+                        return (
+                          <div key={m.id} className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2.5">
+                            <div className="min-w-0">
+                              <p className="font-medium truncate text-[14px]">{label}</p>
+                              <p className="text-[13px] text-[#7d86a8] truncate">@{m.username}</p>
+                            </div>
+                            {isAdmin ? (
+                              <button
+                                type="button"
+                                disabled={modBusyId === m.id}
+                                onClick={() => void moderateSuspension(m.id, 'suspend', label)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[13px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                              >
+                                <Ban className="w-4 h-4 shrink-0" />
+                                {modBusyId === m.id ? '…' : 'Suspend'}
+                              </button>
+                            ) : null}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : null}
 
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Suspended</h4>
-              <p className="text-[#7d86a8] text-xs">These customers cannot use the app until you unsuspend them. Actions are recorded in the moderation log.</p>
-              <div className="rounded-3xl border border-amber-500/20 bg-[#0d1428]/90 divide-y divide-white/10 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
-                {suspendedMembers.length === 0 ? (
-                  <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">No suspended members for this business.</p>
-                ) : (
-                  suspendedMembers.map((m) => {
-                    const label = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
-                    return (
-                      <div key={m.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">{label}</p>
-                          <p className="text-sm text-[#7d86a8] truncate">@{m.username}</p>
-                        </div>
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            disabled={modBusyId === m.id}
-                            onClick={() => void moderateSuspension(m.id, 'unsuspend', label)}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
-                          >
-                            <UserCheck className="w-4 h-4 shrink-0" />
-                            {modBusyId === m.id ? '…' : 'Unsuspend'}
-                          </button>
-                        ) : null}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
+              {usersPanelTab === 'suspended' ? (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold tracking-wide text-[#9ea8cc] uppercase">Suspended</h4>
+                  <p className="text-[#7d86a8] text-xs">
+                    These customers cannot use the app until you unsuspend them. Actions are recorded in the moderation log.
+                  </p>
+                  <div className="rounded-2xl border border-amber-500/20 bg-[#0d1428]/90 divide-y divide-white/10 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)] max-h-[340px] overflow-y-auto">
+                    {suspendedMembers.length === 0 ? (
+                      <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">No suspended members for this business.</p>
+                    ) : (
+                      suspendedMembers.map((m) => {
+                        const label = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
+                        return (
+                          <div key={m.id} className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2.5">
+                            <div className="min-w-0">
+                              <p className="font-medium truncate text-[14px]">{label}</p>
+                              <p className="text-[13px] text-[#7d86a8] truncate">@{m.username}</p>
+                            </div>
+                            {isAdmin ? (
+                              <button
+                                type="button"
+                                disabled={modBusyId === m.id}
+                                onClick={() => void moderateSuspension(m.id, 'unsuspend', label)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[13px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+                              >
+                                <UserCheck className="w-4 h-4 shrink-0" />
+                                {modBusyId === m.id ? '…' : 'Unsuspend'}
+                              </button>
+                            ) : null}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
 
         {activeTab === 'notify' ? (
-          <section className="space-y-4">
-            <h3 className="text-2xl font-bold">Send notification</h3>
-            <p className="text-[#7d86a8] text-sm">
-              <strong>All</strong>: customers who have a support thread or follow your business. <strong>One user</strong>:
-              username or UUID.
+          <section className="space-y-3 max-w-3xl">
+            <p className="text-[12px] text-[#8892b0] leading-relaxed">
+              Sends an <strong className="text-[#c4cbe6]">in-app notification</strong> to each recipient (bell / Notifications screen).{' '}
+              This is <strong className="text-[#c4cbe6]">not</strong> SMS, email, or a DM in their support thread — only the notifications list.
             </p>
-            <div className="rounded-3xl border border-white/10 bg-[#0d1428]/90 p-5 space-y-4 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
+            <p className="text-[12px] text-[#8892b0] leading-relaxed">
+              <strong className="text-[#c4cbe6]">All</strong>: anyone who has messaged your business or follows you.{' '}
+              <strong className="text-[#c4cbe6]">Selected</strong>: pick from that same member list.{' '}
+              <strong className="text-[#c4cbe6]">Labels</strong>: approved customers with at least one conversation tagged with any label you pick.{' '}
+              <strong className="text-[#c4cbe6]">One user</strong>: username or UUID. Pending or suspended customers are always skipped.
+            </p>
+            <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-3 space-y-3">
               <div className="grid grid-cols-3 gap-2">
                 {(['announcement', 'alert', 'update'] as const).map((opt) => (
                   <button
                     key={opt}
                     type="button"
                     onClick={() => setAnnouncementType(opt)}
-                    className={`rounded-xl py-3 border capitalize ${
+                    className={`rounded-xl py-2.5 border capitalize text-[13px] ${
                       announcementType === opt
                         ? 'border-[#6f54ff] bg-[#211a47] text-white'
                         : 'border-white/10 bg-[#111a31] text-[#7d86a8]'
@@ -1403,33 +3124,175 @@ export default function DashboardPage() {
               <div className="rounded-xl border border-white/10 divide-y divide-white/10 overflow-hidden bg-[#111a31]">
                 <AudienceRow label="All (thread + followers)" selected={audience === 'all'} onClick={() => setAudience('all')} />
                 <AudienceRow label="Selected users" selected={audience === 'selected'} onClick={() => setAudience('selected')} />
+                <AudienceRow label="Users with inbox labels" selected={audience === 'labels'} onClick={() => setAudience('labels')} />
                 <AudienceRow label="One user" selected={audience === 'one'} onClick={() => setAudience('one')} />
               </div>
+              {audience === 'labels' ? (
+                <div className="rounded-xl border border-white/10 bg-[#111a31] p-2 space-y-1">
+                  <p className="text-[11px] text-[#8892b0] px-1.5 pt-0.5">
+                    Tick one or more labels. Anyone with a tagged thread for your business (any of these labels) gets the notification.
+                  </p>
+                  <p className="text-[11px] text-[#c4cbe6] px-1.5 pb-1 tabular-nums">
+                    {notifyAudienceLabelIds.length} label{notifyAudienceLabelIds.length === 1 ? '' : 's'} selected
+                  </p>
+                  <div className="max-h-56 overflow-y-auto space-y-1">
+                    {inboxLabelCatalog.length === 0 ? (
+                      <p className="text-xs text-[#7d86a8] px-2 py-3">
+                        No labels defined yet. Add labels from the Inbox tab (requires migration 013), then choose who has those tags on a thread.
+                      </p>
+                    ) : (
+                      inboxLabelCatalog.map((lbl) => {
+                        const selected = notifyAudienceLabelIds.includes(lbl.id)
+                        return (
+                          <button
+                            key={lbl.id}
+                            type="button"
+                            onClick={() => toggleNotifyAudienceLabel(lbl.id)}
+                            className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors flex items-start gap-3 ${
+                              selected
+                                ? 'border-[#6f54ff] bg-[#221c4a] text-white'
+                                : 'border-white/10 bg-[#151d39] text-[#aeb7d6] hover:border-white/20'
+                            }`}
+                          >
+                            <SelectionCheckbox checked={selected} />
+                            <span
+                              className="shrink-0 mt-1 w-2.5 h-2.5 rounded-full ring-1 ring-white/15"
+                              style={{ backgroundColor: lbl.color ?? '#64748b' }}
+                              title="Label color"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="text-sm font-medium truncate block">{lbl.name}</span>
+                              {lbl.is_system ? (
+                                <span className="text-[10px] text-[#5c647e]">preset</span>
+                              ) : null}
+                            </span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : null}
+              {audience === 'selected' ? (
+                <div className="rounded-xl border border-white/10 bg-[#111a31] p-2 space-y-2">
+                  <p className="text-[11px] text-[#8892b0] px-1.5">
+                    Same people as <strong className="text-[#c4cbe6]">Users → Active</strong>: approved customers who follow you or have a support
+                    thread. Tap rows to toggle, or use Select all / Clear.
+                  </p>
+                  {selectableRecipients.length === 0 ? (
+                    <p className="text-xs text-[#7d86a8] px-2 py-3">
+                      No selectable members yet. Members appear after they follow your business or open a support thread.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5c647e]" aria-hidden />
+                        <input
+                          type="search"
+                          className="w-full rounded-lg border border-white/10 bg-[#0c1428] py-2 pl-8 pr-2 text-[12px] text-[#e2e6f5] outline-none focus:border-[#6f54ff]/50"
+                          placeholder="Search by name or @username…"
+                          value={notifyRecipientQuery}
+                          onChange={(e) => setNotifyRecipientQuery(e.target.value)}
+                          aria-label="Filter members for notify"
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 px-0.5">
+                        <button
+                          type="button"
+                          onClick={selectAllNotifyRecipients}
+                          className="rounded-lg border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-semibold text-[#c4cbe6] hover:bg-white/[0.1]"
+                        >
+                          Select all ({selectableRecipients.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearNotifyRecipients}
+                          disabled={selectedRecipientIds.length === 0}
+                          className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] font-semibold text-[#8892b0] hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
+                        >
+                          Clear
+                        </button>
+                        {notifyRecipientQuery.trim() && filteredSelectableRecipients.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={addFilteredRecipientsToSelection}
+                            className="rounded-lg border border-[#6f54ff]/40 bg-[#6f54ff]/15 px-2.5 py-1.5 text-[11px] font-semibold text-[#d4c4ff] hover:bg-[#6f54ff]/25"
+                          >
+                            Add shown ({filteredSelectableRecipients.length})
+                          </button>
+                        ) : null}
+                        <span className="text-[11px] text-[#c4cbe6] tabular-nums ml-auto">
+                          {selectedRecipientIds.length} selected
+                        </span>
+                      </div>
+                      {notifyRecipientQuery.trim() && filteredSelectableRecipients.length < selectableRecipients.length ? (
+                        <p className="text-[10px] text-[#5c647e] px-0.5">
+                          Showing {filteredSelectableRecipients.length} of {selectableRecipients.length} — Select all still selects everyone.
+                        </p>
+                      ) : null}
+                      <div className="max-h-56 overflow-y-auto space-y-1">
+                        {filteredSelectableRecipients.length === 0 ? (
+                          <p className="text-xs text-[#7d86a8] px-2 py-3 text-center">No members match your search.</p>
+                        ) : (
+                          filteredSelectableRecipients.map((member) => {
+                            const label = `${member.first_name ?? ''} ${member.last_name ?? ''}`.trim() || member.username
+                            const selected = selectedRecipientIds.includes(member.id)
+                            return (
+                              <button
+                                key={member.id}
+                                type="button"
+                                onClick={() => toggleSelectedRecipient(member.id)}
+                                className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors flex items-start gap-3 ${
+                                  selected
+                                    ? 'border-[#6f54ff] bg-[#221c4a] text-white'
+                                    : 'border-white/10 bg-[#151d39] text-[#aeb7d6] hover:border-white/20'
+                                }`}
+                              >
+                                <SelectionCheckbox checked={selected} />
+                                <span className="min-w-0 flex-1">
+                                  <span className="text-sm font-medium truncate block">{label}</span>
+                                  <span className="text-xs text-[#7d86a8] truncate block">@{member.username}</span>
+                                </span>
+                              </button>
+                            )
+                          })
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : null}
               {audience === 'one' ? (
                 <input
-                  className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-3 text-sm outline-none focus:border-[#6f54ff]"
+                  className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]"
                   placeholder="Username or user UUID"
                   value={oneUserQuery}
                   onChange={(e) => setOneUserQuery(e.target.value)}
                 />
               ) : null}
               <input
-                className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-3 text-sm outline-none focus:border-[#6f54ff]"
+                className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]"
                 placeholder="Title"
                 value={notifyTitle}
                 onChange={(e) => setNotifyTitle(e.target.value)}
               />
               <textarea
-                className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-3 text-sm outline-none focus:border-[#6f54ff] min-h-28"
+                className="w-full bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] min-h-24"
                 placeholder="Message"
                 value={notifyBody}
                 onChange={(e) => setNotifyBody(e.target.value)}
               />
               <button
                 type="button"
-                disabled={notifyBusy || !notifyTitle.trim() || !notifyBody.trim()}
+                disabled={
+                  notifyBusy ||
+                  !notifyTitle.trim() ||
+                  !notifyBody.trim() ||
+                  (audience === 'selected' && selectedRecipientIds.length === 0) ||
+                  (audience === 'labels' && notifyAudienceLabelIds.length === 0)
+                }
                 onClick={() => void sendMemberNotifications()}
-                className="w-full rounded-xl py-3 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
               >
                 {notifyBusy ? 'Sending…' : 'Send'}
               </button>
@@ -1438,30 +3301,48 @@ export default function DashboardPage() {
         ) : null}
 
         {activeTab === 'reports' ? (
-          <section className="space-y-4">
-            <h3 className="text-2xl font-bold">Reports</h3>
+          <section className="space-y-3">
             {reports.length === 0 ? (
               <p className="text-sm text-[#7d86a8]">No reports for this business.</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {reports.map((report) => (
-                  <article key={report.id} className="rounded-2xl border border-white/10 bg-[#0e1528]/90 p-4 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
+                  <article key={report.id} className="rounded-2xl border border-white/10 bg-[#0e1528]/90 p-3 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)]">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold">{report.name}</p>
                       <StatusPill status={report.status} />
                     </div>
                     <p className="text-sm text-[#73a9ff] mt-2">{report.type}</p>
                     <p className="text-[#7d86a8] mt-1">{report.details}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(['new', 'in_review', 'resolved'] as const).map((nextStatus) => (
+                        <button
+                          key={nextStatus}
+                          type="button"
+                          disabled={reportBusyId === report.id || report.status === nextStatus}
+                          onClick={() => void updateReportStatus(report.id, nextStatus)}
+                          className={`rounded-lg border px-2.5 py-1.5 text-xs capitalize transition-colors disabled:opacity-40 ${
+                            report.status === nextStatus
+                              ? 'border-[#7e66ff] bg-[#221c4a] text-white'
+                              : 'border-white/15 text-[#9ea8cc] hover:text-white hover:border-white/30'
+                          }`}
+                        >
+                          {nextStatus === 'in_review' ? 'In review' : nextStatus}
+                        </button>
+                      ))}
+                    </div>
                   </article>
                 ))}
               </div>
             )}
           </section>
         ) : null}
+          </div>
+        </div>
       </main>
 
       <nav
-        className={`fixed bottom-0 left-0 right-0 lg:hidden border-t border-white/10 bg-[#0a0f1f]/95 backdrop-blur px-1 py-2 grid ${mobileGridClass}`}
+        className={`relay-footer-bar fixed bottom-0 left-0 right-0 lg:hidden border-t border-white/[0.08] bg-[rgba(9,14,32,0.97)] backdrop-blur-md px-1 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] grid ${mobileGridClass}`}
       >
         {navItems.map((item) => {
           const Icon = item.icon
@@ -1472,21 +3353,20 @@ export default function DashboardPage() {
               type="button"
               onClick={() => {
                 setActiveTab(item.id)
-                if (item.id !== 'inbox') setSelectedConvoId(null)
               }}
-              className={`flex flex-col items-center gap-0.5 py-1 rounded-xl min-w-0 relative ${
-                active ? 'text-[#9e88ff] bg-[#1d1a3c]' : 'text-[#7480a6]'
+              className={`flex flex-col items-center gap-0.5 py-1.5 min-w-0 relative ${
+                active ? 'text-[#8d63ff]' : 'text-[#8892b0]'
               }`}
             >
               <span className="relative inline-flex">
-                <Icon className="w-4 h-4 shrink-0" />
+                <Icon className="w-[21px] h-[21px] shrink-0" />
                 {item.id === 'inbox' && inboxUnreadTotal > 0 ? (
-                  <span className="absolute -top-1.5 -right-2 min-w-[15px] h-[15px] px-0.5 rounded-full bg-[#8d63ff] text-white text-[9px] font-bold flex items-center justify-center leading-none tabular-nums border border-[#0a0f1f]">
+                  <span className="absolute top-1 right-[calc(50%-1.25rem)] min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#090e20]">
                     {inboxUnreadTotal > 9 ? '9+' : inboxUnreadTotal}
                   </span>
                 ) : null}
               </span>
-              <span className="text-[10px] leading-tight text-center truncate w-full px-0.5">{item.label}</span>
+              <span className="text-[10px] font-semibold leading-tight text-center truncate w-full px-0.5">{item.label}</span>
             </button>
           )
         })}
@@ -1506,22 +3386,23 @@ function StatCard({
   value: number
   accent: 'yellow' | 'purple' | 'red' | 'green'
 }) {
-  const dotClass =
+  const iconWrap =
     accent === 'yellow'
-      ? 'bg-amber-400'
+      ? 'bg-[rgba(246,179,50,0.1)] text-[#f6b332]'
       : accent === 'purple'
-        ? 'bg-violet-400'
+        ? 'bg-[rgba(141,99,255,0.1)] text-[#8d63ff]'
         : accent === 'red'
-          ? 'bg-red-400'
-          : 'bg-emerald-400'
+          ? 'bg-[rgba(255,59,92,0.1)] text-[#ff3b5c]'
+          : 'bg-[rgba(47,209,127,0.1)] text-[#2fd17f]'
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#0d1428] p-4">
-      <div className="flex items-center justify-between">
-        <div className="w-8 h-8 rounded-lg bg-[#182243] flex items-center justify-center text-[#9f8bff]">{icon}</div>
-        <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+    <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-3 flex items-center gap-2">
+      <div className={`w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 [&_svg]:stroke-current ${iconWrap}`}>
+        {icon}
       </div>
-      <p className="text-4xl font-bold mt-4">{value}</p>
-      <p className="text-[#7d86a8]">{label}</p>
+      <div className="min-w-0">
+        <p className="text-[20px] font-bold leading-none text-white tabular-nums">{value}</p>
+        <p className="text-[11px] text-[#8892b0] mt-0.5">{label}</p>
+      </div>
     </div>
   )
 }
@@ -1541,10 +3422,10 @@ function QuickButton({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-2xl border border-white/10 bg-[#0d1428] px-4 py-3 flex items-center justify-center gap-2 text-[#9ea8cc] hover:text-white relative"
+      className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] px-3 py-2.5 flex items-center justify-center gap-2 text-[12px] font-semibold text-[#c4cbe6] hover:text-white hover:border-[rgba(141,99,255,0.3)] hover:bg-[rgba(141,99,255,0.06)] transition-all relative [&_svg]:text-[#8d63ff] [&_svg]:w-[15px] [&_svg]:h-[15px]"
     >
       {typeof badgeCount === 'number' && badgeCount > 0 ? (
-        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#8d63ff] text-white text-[10px] font-bold flex items-center justify-center tabular-nums border-2 border-[#0d1428]">
+        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#8d63ff] text-white text-[9px] font-bold flex items-center justify-center tabular-nums border-2 border-[#050814]">
           {badgeCount > 99 ? '99+' : badgeCount}
         </span>
       ) : null}
@@ -1554,11 +3435,30 @@ function QuickButton({
   )
 }
 
+function SelectionCheckbox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`mt-0.5 shrink-0 w-[18px] h-[18px] rounded-[4px] border-2 flex items-center justify-center ${
+        checked ? 'border-[#a78bfa] bg-[#6f54ff]/35' : 'border-white/30 bg-[#0a1020]'
+      }`}
+      aria-hidden
+    >
+      {checked ? <Check className="w-3.5 h-3.5 text-[#ede9fe]" strokeWidth={3} /> : null}
+    </span>
+  )
+}
+
 function AudienceRow({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="w-full px-4 py-3 flex items-center justify-between">
+    <button type="button" onClick={onClick} className="w-full px-3 py-2.5 flex items-center justify-between gap-3">
       <span className="text-left text-sm">{label}</span>
-      <span className={`w-5 h-5 rounded-full border shrink-0 ${selected ? 'border-[#7e66ff] bg-[#7e66ff]' : 'border-white/20'}`} />
+      <span
+        className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
+          selected ? 'border-[#a78bfa] bg-[#6f54ff]/40' : 'border-white/25 bg-transparent'
+        }`}
+      >
+        {selected ? <Check className="w-3 h-3 text-[#ede9fe]" strokeWidth={3} /> : null}
+      </span>
     </button>
   )
 }

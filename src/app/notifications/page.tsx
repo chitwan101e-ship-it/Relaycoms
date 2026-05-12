@@ -1,11 +1,13 @@
-﻿'use client'
+'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Bell, ArrowLeft, Loader2, CheckCheck } from 'lucide-react'
+import { CustomerMobileFooterNav } from '@/components/CustomerMobileFooterNav'
+import { Bell, ArrowLeft, Loader2, CheckCheck, Home, User } from 'lucide-react'
 
-type ProfileRow = { id: string; role: 'customer' | 'business'; account_status?: string }
+type ProfileRow = { id: string; role: 'customer' | 'business'; account_status?: string | null }
 type NotificationRow = {
   id: string
   type: string
@@ -32,6 +34,7 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<NotificationRow[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  const [portalRole, setPortalRole] = useState<'customer' | 'business' | null>(null)
 
   const load = useCallback(
     async (uid: string) => {
@@ -75,8 +78,8 @@ export default function NotificationsPage() {
       }
 
       const p = prof as ProfileRow & { deleted_at?: string | null }
-      if (p.role !== 'customer') {
-        router.replace('/dashboard')
+      if (p.role !== 'customer' && p.role !== 'business') {
+        router.replace('/signup')
         return
       }
 
@@ -91,11 +94,12 @@ export default function NotificationsPage() {
         return
       }
 
-      if (p.account_status !== 'approved') {
+      if (p.role === 'customer' && p.account_status !== 'approved') {
         router.replace('/pending-approval')
         return
       }
 
+      setPortalRole(p.role)
       await load(session.user.id)
       if (cancelled) return
       setLoading(false)
@@ -134,10 +138,41 @@ export default function NotificationsPage() {
     }
   }, [loading, supabase, load])
 
+  useEffect(() => {
+    if (loading) return
+    let timer: number | null = null
+    let mounted = true
+
+    const tick = async () => {
+      if (!mounted || document.visibilityState !== 'visible') return
+      const { data } = await supabase.auth.getSession()
+      const uid = data.session?.user?.id
+      if (uid) await load(uid)
+    }
+
+    timer = window.setInterval(() => {
+      void tick()
+    }, 15000)
+    void tick()
+
+    return () => {
+      mounted = false
+      if (timer) window.clearInterval(timer)
+    }
+  }, [loading, supabase, load])
+
   async function markOne(id: string) {
     setBusy(id)
     try {
-      const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id)
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', id)
+        .eq('user_id', user.id)
       if (error) throw error
       setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
     } catch (e) {
@@ -150,9 +185,17 @@ export default function NotificationsPage() {
   async function markAll() {
     setBusy('all')
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
       const ids = items.filter((n) => !n.read).map((n) => n.id)
       if (ids.length === 0) return
-      const { error } = await supabase.from('notifications').update({ read: true }).in('id', ids)
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .in('id', ids)
+        .eq('user_id', user.id)
       if (error) throw error
       setItems((prev) => prev.map((n) => ({ ...n, read: true })))
     } catch (e) {
@@ -171,14 +214,15 @@ export default function NotificationsPage() {
   }
 
   const unreadCount = items.filter((n) => !n.read).length
+  const homeHref = portalRole === 'business' ? '/dashboard' : '/feed'
 
   return (
-    <div className="min-h-screen bg-[#050814] pb-8 text-white">
+    <div className="min-h-screen bg-[#050814] pb-28 text-white">
       <header className="sticky top-0 z-40 bg-[#0b1020]/95 border-b border-white/10 backdrop-blur">
         <div className="max-w-3xl mx-auto px-3 sm:px-4 h-14 flex items-center gap-3">
           <button
             type="button"
-            onClick={() => router.push('/feed')}
+            onClick={() => router.push(homeHref)}
             className="p-2 rounded-full hover:bg-white/10"
             aria-label="Back"
           >
@@ -249,6 +293,45 @@ export default function NotificationsPage() {
           </div>
         )}
       </main>
+
+      {portalRole === 'customer' ? (
+        <CustomerMobileFooterNav
+          unreadNotifications={unreadCount}
+          isLight={false}
+          onChatClick={() => router.push('/feed?openChat=1')}
+        />
+      ) : (
+        <nav
+          className="relay-footer-bar fixed bottom-0 left-0 right-0 z-30 flex border-t border-white/[0.08] bg-[#090e20]/96 backdrop-blur-[16px] min-[900px]:hidden"
+          style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 6px)', paddingTop: '6px' }}
+          aria-label="Primary"
+        >
+          <Link
+            href={homeHref}
+            className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#8892b0]"
+          >
+            <Home className="w-[22px] h-[22px]" strokeWidth={2} />
+            Home
+          </Link>
+          <Link
+            href="/notifications"
+            className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#8d63ff]"
+          >
+            <Bell className="w-[22px] h-[22px]" strokeWidth={2} />
+            {unreadCount > 0 ? (
+              <span className="absolute top-0.5 right-[calc(50%-1.125rem)] h-2 w-2 rounded-full bg-[#ff3b5c] ring-2 ring-[#090e20]" />
+            ) : null}
+            Alerts
+          </Link>
+          <Link
+            href="/profile"
+            className="flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#8892b0]"
+          >
+            <User className="w-[22px] h-[22px]" strokeWidth={2} />
+            Profile
+          </Link>
+        </nav>
+      )}
     </div>
   )
 }

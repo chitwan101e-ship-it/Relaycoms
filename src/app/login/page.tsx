@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -19,6 +19,40 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const q = new URLSearchParams(window.location.search)
+    const err = q.get('error')
+    if (err) setError(decodeURIComponent(err))
+    if (q.get('reset') === 'ok') setInfo('Password updated. Sign in with your new password.')
+  }, [])
+
+  async function sendPasswordReset() {
+    const em = email.trim()
+    if (!em) {
+      setError('Enter your email address first.')
+      return
+    }
+    setError('')
+    setInfo('')
+    setResetBusy(true)
+    try {
+      const { error: rErr } = await supabase.auth.resetPasswordForEmail(em, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/update-password`,
+      })
+      if (rErr) throw rErr
+      setResetSent(true)
+      setInfo('Check your email for a reset link.')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not send reset email.')
+    } finally {
+      setResetBusy(false)
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -156,6 +190,19 @@ export default function LoginPage() {
             </div>
 
             {error ? <p className="text-red-400 text-sm">{error}</p> : null}
+            {info ? <p className="text-emerald-400/90 text-sm">{info}</p> : null}
+            {resetSent ? <p className="text-[#7f8bad] text-sm">If an account exists for that email, a reset link is on the way.</p> : null}
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void sendPasswordReset()}
+                disabled={resetBusy}
+                className="text-sm text-[#8d63ff] hover:underline disabled:opacity-50"
+              >
+                {resetBusy ? 'Sending…' : 'Forgot password?'}
+              </button>
+            </div>
 
             <button
               type="submit"
