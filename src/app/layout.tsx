@@ -12,6 +12,11 @@ const relayFooter = Inter({
 export const metadata: Metadata = {
   title: 'Relay',
   description: 'Customer support and announcements platform',
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
 }
 
 export const viewport: Viewport = {

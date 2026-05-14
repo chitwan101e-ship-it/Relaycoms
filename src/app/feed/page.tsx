@@ -62,6 +62,13 @@ type CommentRow = {
   profiles: ProfileEmbed | ProfileEmbed[] | null
 }
 type ConversationRow = { id: string; business_id: string; customer_id: string; status: string }
+type MessageSenderEmbed = {
+  username: string
+  first_name: string
+  last_name: string
+  role: string
+  business_role: string | null
+}
 type MessageRow = {
   id: string
   conversation_id: string
@@ -71,6 +78,7 @@ type MessageRow = {
   image_url?: string | null
   read?: boolean | null
   read_at?: string | null
+  profiles?: MessageSenderEmbed | MessageSenderEmbed[] | null
 }
 
 type AppearanceMode = 'dark' | 'playful'
@@ -195,6 +203,14 @@ export default function FeedPage() {
   const followedBusinessIdsRef = useRef<string[]>([])
   const consumedOpenChatQueryRef = useRef(false)
   const openPrimarySupportChatRef = useRef<() => Promise<void>>(async () => {})
+  const supportChatChannelRef = useRef<ReturnType<(typeof supabase)['channel']> | null>(null)
+  const supportChatBroadcastReadyRef = useRef(false)
+  const customerTypingSentRef = useRef(false)
+  const customerTypingIdleTimerRef = useRef<number | null>(null)
+  const peerTeamTypingClearTimerRef = useRef<number | null>(null)
+  const [peerTeamTyping, setPeerTeamTyping] = useState(false)
+  /** Increments when the customer-chat Realtime channel is subscribed so typing emit retries. */
+  const [supportTypingChannelReady, setSupportTypingChannelReady] = useState(0)
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -554,9 +570,12 @@ export default function FeedPage() {
 
   const loadConversationMessages = useCallback(
     async (conversationId: string) => {
+      const sel =
+        'id, conversation_id, sender_id, body, created_at, image_url, read, read_at, profiles ( username, first_name, last_name, role, business_role )'
+
       const { data: msgs, error: mErr } = await supabase
         .from('messages')
-        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
+        .select(sel)
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
 
@@ -568,7 +587,7 @@ export default function FeedPage() {
 
       const { data: msgs2 } = await supabase
         .from('messages')
-        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
+        .select(sel)
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
       if (msgs2) setMessages(msgs2 as MessageRow[])
@@ -583,25 +602,28 @@ export default function FeedPage() {
   )
 
   /**
-   * Platform / admin chat: env slug, slug/name hints, then first team alphabetically.
-   * Prefer businesses the customer follows so the footer Chat target is not a random global row.
+   * Which business receives footer / primary Support chat.
+   * If NEXT_PUBLIC_PRIMARY_SUPPORT_BUSINESS_SLUG is set, it wins against the full businesses list
+   * (not only businesses the customer follows) — otherwise a customer-only follow list would miss the support business.
+   * When unset, prefer followed businesses for hints, then first team alphabetically.
    */
   function resolvePrimarySupportBusinessId(): string | null {
     const list = businesses
     if (list.length === 0) return null
-
-    const followedSet = new Set(followedBusinessIds)
-    const followedRows = list.filter((b) => followedSet.has(b.id))
-    const pool = followedRows.length > 0 ? followedRows : list
 
     const pickFirstByName = (rows: BusinessRow[]) =>
       [...rows].sort((a, b) => a.name.localeCompare(b.name))[0]?.id ?? null
 
     const envSlug = process.env.NEXT_PUBLIC_PRIMARY_SUPPORT_BUSINESS_SLUG?.trim()
     if (envSlug) {
-      const hit = pool.find((b) => b.slug.toLowerCase() === envSlug.toLowerCase())
-      if (hit) return hit.id
+      const fromEnv = list.find((b) => b.slug.toLowerCase() === envSlug.toLowerCase())
+      if (fromEnv) return fromEnv.id
     }
+
+    const followedSet = new Set(followedBusinessIds)
+    const followedRows = list.filter((b) => followedSet.has(b.id))
+    const pool = followedRows.length > 0 ? followedRows : list
+
     const slugHints = ['support', 'relay', 'jbcoms', 'admin', 'help']
     for (const s of slugHints) {
       const hit = pool.find((b) => b.slug.toLowerCase() === s)
@@ -762,25 +784,145 @@ export default function FeedPage() {
   }, [supabase, profile?.id, loadAnnouncements, loadUnreadNotifications, refreshMessagingUI])
 
   useEffect(() => {
-    if (!conversation?.id) return
+    if (!conversation?.id || !profile?.id) return
+    const cid = conversation.id
+    const myId = profile.id
+    let stopped = false
+    supportChatBroadcastReadyRef.current = false
+    supportChatChannelRef.current = null
+
     const channel = supabase
-      .channel(`customer-chat-${conversation.id}`)
+      .channel(`customer-chat-${cid}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
-        () => void loadConversationMessages(conversation.id)
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
+        () => void loadConversationMessages(cid)
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
-        () => void loadConversationMessages(conversation.id)
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
+        () => void loadConversationMessages(cid)
       )
-      .subscribe()
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        const p = payload as { userId?: string; typing?: boolean }
+        if (!p?.userId || p.userId === myId) return
+        if (peerTeamTypingClearTimerRef.current) {
+          window.clearTimeout(peerTeamTypingClearTimerRef.current)
+          peerTeamTypingClearTimerRef.current = null
+        }
+        if (p.typing) {
+          setPeerTeamTyping(true)
+          peerTeamTypingClearTimerRef.current = window.setTimeout(() => {
+            setPeerTeamTyping(false)
+            peerTeamTypingClearTimerRef.current = null
+          }, 3500)
+        } else {
+          setPeerTeamTyping(false)
+        }
+      })
+      .subscribe((status) => {
+        if (stopped) return
+        supportChatBroadcastReadyRef.current = status === 'SUBSCRIBED'
+        if (status === 'SUBSCRIBED') setSupportTypingChannelReady((n) => n + 1)
+      })
+
+    supportChatChannelRef.current = channel
 
     return () => {
+      stopped = true
+      supportChatBroadcastReadyRef.current = false
+      supportChatChannelRef.current = null
+      if (customerTypingIdleTimerRef.current) {
+        window.clearTimeout(customerTypingIdleTimerRef.current)
+        customerTypingIdleTimerRef.current = null
+      }
+      if (customerTypingSentRef.current) {
+        void channel.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { userId: myId, typing: false },
+        })
+        customerTypingSentRef.current = false
+      }
+      if (peerTeamTypingClearTimerRef.current) {
+        window.clearTimeout(peerTeamTypingClearTimerRef.current)
+        peerTeamTypingClearTimerRef.current = null
+      }
+      setPeerTeamTyping(false)
       void supabase.removeChannel(channel)
     }
-  }, [supabase, conversation?.id, loadConversationMessages])
+  }, [supabase, conversation?.id, loadConversationMessages, profile?.id])
+
+  /** Emit typing while the customer has text or an attachment in the composer. */
+  useEffect(() => {
+    if (!conversation?.id || !profile?.id) return
+    if (!supportOpen || supportPanelView !== 'chat') return
+    const hasComposerContent = Boolean(supportDraft.trim()) || Boolean(pendingAttachment)
+    const ch = supportChatChannelRef.current
+    const myId = profile.id
+
+    const sendStop = () => {
+      if (customerTypingIdleTimerRef.current) {
+        window.clearTimeout(customerTypingIdleTimerRef.current)
+        customerTypingIdleTimerRef.current = null
+      }
+      if (!customerTypingSentRef.current) return
+      if (supportChatBroadcastReadyRef.current && ch) {
+        void ch.send({ type: 'broadcast', event: 'typing', payload: { userId: myId, typing: false } })
+      }
+      customerTypingSentRef.current = false
+    }
+
+    if (!hasComposerContent) {
+      sendStop()
+      return
+    }
+
+    if (supportChatBroadcastReadyRef.current && ch) {
+      if (!customerTypingSentRef.current) {
+        void ch.send({ type: 'broadcast', event: 'typing', payload: { userId: myId, typing: true } })
+        customerTypingSentRef.current = true
+      }
+    }
+
+    if (customerTypingIdleTimerRef.current) window.clearTimeout(customerTypingIdleTimerRef.current)
+    customerTypingIdleTimerRef.current = window.setTimeout(() => {
+      customerTypingIdleTimerRef.current = null
+      sendStop()
+    }, 2000)
+
+    return () => {
+      if (customerTypingIdleTimerRef.current) {
+        window.clearTimeout(customerTypingIdleTimerRef.current)
+        customerTypingIdleTimerRef.current = null
+      }
+    }
+  }, [
+    supportDraft,
+    pendingAttachment,
+    conversation?.id,
+    profile?.id,
+    supportOpen,
+    supportPanelView,
+    supportTypingChannelReady,
+  ])
+
+  useEffect(() => {
+    if (supportOpen && supportPanelView === 'chat') return
+    const ch = supportChatChannelRef.current
+    if (ch && supportChatBroadcastReadyRef.current && profile?.id && customerTypingSentRef.current) {
+      void ch.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: profile.id, typing: false },
+      })
+      customerTypingSentRef.current = false
+    }
+    if (customerTypingIdleTimerRef.current) {
+      window.clearTimeout(customerTypingIdleTimerRef.current)
+      customerTypingIdleTimerRef.current = null
+    }
+  }, [supportOpen, supportPanelView, profile?.id])
 
   useEffect(() => {
     if (!profile?.id || !conversation?.id) return
@@ -867,6 +1009,20 @@ export default function FeedPage() {
     const hasImage = !!pendingAttachment
     if (!text && !hasImage) return
 
+    const chTyping = supportChatChannelRef.current
+    if (chTyping && supportChatBroadcastReadyRef.current && customerTypingSentRef.current) {
+      void chTyping.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: profile.id, typing: false },
+      })
+      customerTypingSentRef.current = false
+    }
+    if (customerTypingIdleTimerRef.current) {
+      window.clearTimeout(customerTypingIdleTimerRef.current)
+      customerTypingIdleTimerRef.current = null
+    }
+
     setSupportLoading(true)
     try {
       let imageUrl: string | null = null
@@ -886,6 +1042,9 @@ export default function FeedPage() {
 
       const body = text || (imageUrl ? '📷' : ' ')
 
+      const sel =
+        'id, conversation_id, sender_id, body, created_at, image_url, read, read_at, profiles ( username, first_name, last_name, role, business_role )'
+
       const { data, error } = await supabase
         .from('messages')
         .insert({
@@ -894,7 +1053,7 @@ export default function FeedPage() {
           body,
           image_url: imageUrl,
         })
-        .select('id, conversation_id, sender_id, body, created_at, image_url, read, read_at')
+        .select(sel)
         .single()
 
       if (error) throw error
@@ -1540,6 +1699,11 @@ export default function FeedPage() {
                 ) : (
                   messages.map((m, i) => {
                     const mine = m.sender_id === profile.id
+                    const embed = one(m.profiles)
+                    const teamLine =
+                      !mine && embed && embed.role === 'business'
+                        ? `${[embed.first_name, embed.last_name].filter(Boolean).join(' ').trim() || `@${embed.username}`} · @${embed.username}`
+                        : null
                     const showText = Boolean(m.body?.trim()) && m.body !== '📷'
                     const isLastMine = mine && i === feedSeenIndexes.lastMine
                     const isLastOther = !mine && i === feedSeenIndexes.lastOther
@@ -1551,6 +1715,11 @@ export default function FeedPage() {
                           mine ? 'ml-auto items-end' : 'mr-auto items-start'
                         )}
                       >
+                        {teamLine ? (
+                          <p className="text-[10px] text-[#aeb7d6] px-1 pb-0.5 font-medium truncate max-w-full" title={teamLine}>
+                            {teamLine}
+                          </p>
+                        ) : null}
                         <div
                           className={clsx(
                             'text-sm shadow-lg overflow-hidden max-w-full ring-1 ring-white/10',
@@ -1618,6 +1787,11 @@ export default function FeedPage() {
                     )
                   })
                 )}
+                {peerTeamTyping ? (
+                  <p className="text-left text-xs text-[#9ba6cb] pl-1 pb-0.5" aria-live="polite">
+                    Team is typing…
+                  </p>
+                ) : null}
                 <div ref={supportMessagesEndRef} className="h-px w-full" aria-hidden />
               </div>
 

@@ -28,15 +28,18 @@ import {
   BookMarked,
   Pencil,
   Ban,
+  Eye,
+  EyeOff,
   Trash2,
   ThumbsUp,
   UserCheck,
   User2,
   Users,
+  UserCog,
   X,
 } from 'lucide-react'
 
-type AppTab = 'home' | 'post' | 'inbox' | 'users' | 'notify' | 'reports'
+type AppTab = 'home' | 'post' | 'inbox' | 'users' | 'notify' | 'reports' | 'team'
 type UsersPanelTab = 'pending' | 'active' | 'suspended'
 
 type ProfileRow = {
@@ -213,11 +216,12 @@ const NAV_DEF: {
   icon: ComponentType<{ className?: string }>
 }[] = [
   { id: 'home', label: 'Home', icon: Shield },
-  { id: 'post', label: 'Post', adminOnly: true, icon: Megaphone },
+  { id: 'post', label: 'Post', icon: Megaphone },
   { id: 'inbox', label: 'Inbox', icon: InboxTabIcon },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'notify', label: 'Notify', icon: Send },
   { id: 'reports', label: 'Reports', icon: ClipboardList },
+  { id: 'team', label: 'Team', adminOnly: true, icon: UserCog },
 ]
 
 function timeAgo(iso: string) {
@@ -304,6 +308,13 @@ export default function DashboardPage() {
   const replyImageInputRef = useRef<HTMLInputElement>(null)
   const threadScrollRef = useRef<HTMLDivElement>(null)
   const threadEndRef = useRef<HTMLDivElement>(null)
+  const staffThreadChannelRef = useRef<ReturnType<(typeof supabase)['channel']> | null>(null)
+  const staffThreadBroadcastReadyRef = useRef(false)
+  const staffTypingSentRef = useRef(false)
+  const staffTypingIdleTimerRef = useRef<number | null>(null)
+  const peerCustomerTypingClearTimerRef = useRef<number | null>(null)
+  const [peerCustomerTyping, setPeerCustomerTyping] = useState(false)
+  const [staffTypingChannelReady, setStaffTypingChannelReady] = useState(0)
   const [myAnnouncements, setMyAnnouncements] = useState<OwnAnnouncementRow[]>([])
   const [myAnnouncementsMeta, setMyAnnouncementsMeta] = useState<
     Record<
@@ -352,6 +363,19 @@ export default function DashboardPage() {
   const [staffAvatarBusy, setStaffAvatarBusy] = useState(false)
   const staffAvatarInputRef = useRef<HTMLInputElement>(null)
 
+  const [teamRows, setTeamRows] = useState<
+    { id: string; username: string; first_name: string; last_name: string; business_role: 'admin' | 'support'; deleted_at: string | null }[]
+  >([])
+  const [teamLoadBusy, setTeamLoadBusy] = useState(false)
+  const [newStaffFirst, setNewStaffFirst] = useState('')
+  const [newStaffEmail, setNewStaffEmail] = useState('')
+  const [newStaffUsername, setNewStaffUsername] = useState('')
+  const [newStaffPassword, setNewStaffPassword] = useState('')
+  const [newStaffPasswordConfirm, setNewStaffPasswordConfirm] = useState('')
+  const [showNewStaffPassword, setShowNewStaffPassword] = useState(false)
+  const [createStaffBusy, setCreateStaffBusy] = useState(false)
+  const [removeStaffBusyId, setRemoveStaffBusyId] = useState<string | null>(null)
+
   const profileRef = useRef<ProfileRow | null>(null)
   profileRef.current = profile
 
@@ -371,6 +395,36 @@ export default function DashboardPage() {
     }
     return NAV_DEF
   }, [profile])
+
+  const loadTeam = useCallback(async () => {
+    const bid = profileRef.current?.business_id
+    if (!bid || profileRef.current?.business_role !== 'admin') return
+    setTeamLoadBusy(true)
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, first_name, last_name, business_role, deleted_at')
+        .eq('business_id', bid)
+        .eq('role', 'business')
+        .order('business_role', { ascending: true })
+        .order('username', { ascending: true })
+      if (error) throw error
+      setTeamRows(
+        (data || []) as {
+          id: string
+          username: string
+          first_name: string
+          last_name: string
+          business_role: 'admin' | 'support'
+          deleted_at: string | null
+        }[]
+      )
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setTeamLoadBusy(false)
+    }
+  }, [supabase])
 
   const refreshDashboard = useCallback(
     async (p: ProfileRow) => {
@@ -402,7 +456,17 @@ export default function DashboardPage() {
           if (!r.ok) return { error: j.error || `HTTP ${r.status}` }
           return { pending: j.pending ?? [] }
         })
-        .catch((e: unknown) => ({ error: e instanceof Error ? e.message : 'Network error' }))
+        .catch((e: unknown) => {
+          const raw = e instanceof Error ? e.message : 'Network error'
+          const isOffline =
+            e instanceof TypeError &&
+            (raw === 'Failed to fetch' || raw === 'Load failed' || raw === 'NetworkError when attempting to fetch resource.')
+          return {
+            error: isOffline
+              ? 'Could not reach the app server for pending signups (often: dev server stopped, tab offline, or request blocked). Try Refresh after confirming npm run dev is running.'
+              : raw,
+          }
+        })
 
       const [convRes, pendingRes, reportRes, convCustRes, followRes, cannedRes] = await Promise.all([
         supabase
@@ -782,9 +846,9 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (activeTab !== 'post' || profile?.business_role !== 'admin' || !profile.business_id) return
+    if (activeTab !== 'post' || !profile?.business_id) return
     void loadMyAnnouncements(profile.business_id)
-  }, [activeTab, profile?.business_role, profile?.business_id, loadMyAnnouncements])
+  }, [activeTab, profile?.business_id, loadMyAnnouncements])
 
   useEffect(() => {
     let cancelled = false
@@ -799,7 +863,7 @@ export default function DashboardPage() {
 
       const { data: prof, error } = await supabase
         .from('profiles')
-        .select('id, role, username, avatar_url, business_id, business_role')
+        .select('id, role, username, avatar_url, business_id, business_role, deleted_at, account_status')
         .eq('id', session.user.id)
         .single()
 
@@ -808,15 +872,34 @@ export default function DashboardPage() {
         return
       }
 
-      const p = prof as ProfileRow
-      if (p.role !== 'business') {
+      const p = prof as ProfileRow & { deleted_at?: string | null; account_status?: string }
+      if (p.deleted_at) {
+        await supabase.auth.signOut()
+        router.replace('/login')
+        return
+      }
+      if (p.account_status && p.account_status !== 'approved') {
+        await supabase.auth.signOut()
+        router.replace('/login')
+        return
+      }
+
+      const pRow: ProfileRow = {
+        id: p.id,
+        role: p.role,
+        username: p.username,
+        avatar_url: p.avatar_url,
+        business_id: p.business_id,
+        business_role: p.business_role,
+      }
+      if (pRow.role !== 'business') {
         router.replace('/feed')
         return
       }
       if (cancelled) return
-      setProfile(p)
+      setProfile(pRow)
       setLoading(false)
-      await refreshDashboard(p)
+      await refreshDashboard(pRow)
     }
     void init()
     return () => {
@@ -894,29 +977,122 @@ export default function DashboardPage() {
   }, [supabase, refreshDashboard, profile?.business_id])
 
   useEffect(() => {
-    if (!selectedConvoId) return
+    if (!selectedConvoId || !profile?.id) return
+    const cid = selectedConvoId
+    const myId = profile.id
+    let stopped = false
+    staffThreadBroadcastReadyRef.current = false
+    staffThreadChannelRef.current = null
+
     const channel = supabase
-      .channel(`staff-thread-${selectedConvoId}`)
+      .channel(`staff-thread-${cid}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selectedConvoId}` },
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
         () => {
-          void openThread(selectedConvoId)
+          void openThread(cid)
         }
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selectedConvoId}` },
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
         () => {
-          void openThread(selectedConvoId)
+          void openThread(cid)
         }
       )
-      .subscribe()
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        const p = payload as { userId?: string; typing?: boolean }
+        if (!p?.userId || p.userId === myId) return
+        if (peerCustomerTypingClearTimerRef.current) {
+          window.clearTimeout(peerCustomerTypingClearTimerRef.current)
+          peerCustomerTypingClearTimerRef.current = null
+        }
+        if (p.typing) {
+          setPeerCustomerTyping(true)
+          peerCustomerTypingClearTimerRef.current = window.setTimeout(() => {
+            setPeerCustomerTyping(false)
+            peerCustomerTypingClearTimerRef.current = null
+          }, 3500)
+        } else {
+          setPeerCustomerTyping(false)
+        }
+      })
+      .subscribe((status) => {
+        if (stopped) return
+        staffThreadBroadcastReadyRef.current = status === 'SUBSCRIBED'
+        if (status === 'SUBSCRIBED') setStaffTypingChannelReady((n) => n + 1)
+      })
+
+    staffThreadChannelRef.current = channel
 
     return () => {
+      stopped = true
+      staffThreadBroadcastReadyRef.current = false
+      staffThreadChannelRef.current = null
+      if (staffTypingIdleTimerRef.current) {
+        window.clearTimeout(staffTypingIdleTimerRef.current)
+        staffTypingIdleTimerRef.current = null
+      }
+      if (staffTypingSentRef.current) {
+        void channel.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { userId: myId, typing: false },
+        })
+        staffTypingSentRef.current = false
+      }
+      if (peerCustomerTypingClearTimerRef.current) {
+        window.clearTimeout(peerCustomerTypingClearTimerRef.current)
+        peerCustomerTypingClearTimerRef.current = null
+      }
+      setPeerCustomerTyping(false)
       void supabase.removeChannel(channel)
     }
-  }, [supabase, selectedConvoId])
+  }, [supabase, selectedConvoId, profile?.id])
+
+  useEffect(() => {
+    if (!selectedConvoId || !profile?.id) return
+    const hasComposerContent = Boolean(replyDraft.trim()) || Boolean(replyPendingImage)
+    const ch = staffThreadChannelRef.current
+    const myId = profile.id
+
+    const sendStop = () => {
+      if (staffTypingIdleTimerRef.current) {
+        window.clearTimeout(staffTypingIdleTimerRef.current)
+        staffTypingIdleTimerRef.current = null
+      }
+      if (!staffTypingSentRef.current) return
+      if (staffThreadBroadcastReadyRef.current && ch) {
+        void ch.send({ type: 'broadcast', event: 'typing', payload: { userId: myId, typing: false } })
+      }
+      staffTypingSentRef.current = false
+    }
+
+    if (!hasComposerContent) {
+      sendStop()
+      return
+    }
+
+    if (staffThreadBroadcastReadyRef.current && ch) {
+      if (!staffTypingSentRef.current) {
+        void ch.send({ type: 'broadcast', event: 'typing', payload: { userId: myId, typing: true } })
+        staffTypingSentRef.current = true
+      }
+    }
+
+    if (staffTypingIdleTimerRef.current) window.clearTimeout(staffTypingIdleTimerRef.current)
+    staffTypingIdleTimerRef.current = window.setTimeout(() => {
+      staffTypingIdleTimerRef.current = null
+      sendStop()
+    }, 2000)
+
+    return () => {
+      if (staffTypingIdleTimerRef.current) {
+        window.clearTimeout(staffTypingIdleTimerRef.current)
+        staffTypingIdleTimerRef.current = null
+      }
+    }
+  }, [replyDraft, replyPendingImage, selectedConvoId, profile?.id, staffTypingChannelReady])
 
   useEffect(() => {
     const uid = profile?.id
@@ -945,14 +1121,114 @@ export default function DashboardPage() {
     }
   }, [supabase, profile?.id])
 
+  useEffect(() => {
+    if (activeTab !== 'team' || profileRef.current?.business_role !== 'admin') return
+    void loadTeam()
+  }, [activeTab, loadTeam])
+
+  /** Support must not stay on Team (nav hidden); avoids blank or stale state if URL/bookmark forced the tab. */
+  useEffect(() => {
+    if (!profile) return
+    if (profile.business_role !== 'admin' && activeTab === 'team') {
+      setActiveTab('home')
+    }
+  }, [profile, activeTab])
+
   async function manualRefresh() {
     const p = profileRef.current
     if (!p?.business_id) return
     setDashRefreshing(true)
     try {
       await refreshDashboard(p)
+      if (p.business_role === 'admin' && activeTabRef.current === 'team') await loadTeam()
     } finally {
       setDashRefreshing(false)
+    }
+  }
+
+  async function createSupportStaff() {
+    if (profileRef.current?.business_role !== 'admin') return
+    const firstName = newStaffFirst.trim()
+    const staffEmail = newStaffEmail.trim().toLowerCase()
+    const staffUsername = newStaffUsername.trim().replace(/^@+/, '')
+    const pw = newStaffPassword
+    const pw2 = newStaffPasswordConfirm
+    if (!firstName || !staffEmail || !staffUsername || !pw || !pw2) {
+      alert('Fill in first name, work email, username, password, and confirm password.')
+      return
+    }
+    if (pw !== pw2) {
+      alert('Password and confirm password must match.')
+      return
+    }
+    if (pw.length < 8) {
+      alert('Password must be at least 8 characters.')
+      return
+    }
+    setCreateStaffBusy(true)
+    let createdOk = false
+    let errMsg: string | null = null
+    try {
+      const r = await fetch('/api/staff/create-support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName,
+          email: staffEmail,
+          username: staffUsername,
+          password: pw,
+          confirmPassword: pw2,
+        }),
+        signal: AbortSignal.timeout(150_000),
+      })
+      const j = (await r.json().catch(() => ({}))) as { error?: string }
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setNewStaffFirst('')
+      setNewStaffEmail('')
+      setNewStaffUsername('')
+      setNewStaffPassword('')
+      setNewStaffPasswordConfirm('')
+      setShowNewStaffPassword(false)
+      void loadTeam()
+      createdOk = true
+    } catch (e) {
+      const aborted =
+        e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')
+      errMsg = aborted
+        ? 'Request timed out. Check your connection and try again.'
+        : e instanceof Error
+          ? e.message
+          : 'Could not create staff.'
+    } finally {
+      // Must run before alert(): alert blocks the main thread, so clearing busy in a finally after
+      // alert() kept the button spinning until the dialog was dismissed (easy to miss if pop-ups are blocked).
+      setCreateStaffBusy(false)
+    }
+    if (errMsg) alert(errMsg)
+    else if (createdOk) {
+      alert(
+        'Support staff added. They sign in at the same page as you: work email + password. Customers see their name and @username in chat.'
+      )
+    }
+  }
+
+  async function removeSupportMember(targetUserId: string, display: string) {
+    if (profileRef.current?.business_role !== 'admin') return
+    if (!window.confirm(`Remove ${display} from your team? They will no longer be able to sign in.`)) return
+    setRemoveStaffBusyId(targetUserId)
+    try {
+      const r = await fetch('/api/staff/remove-support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId }),
+      })
+      const j = (await r.json().catch(() => ({}))) as { error?: string }
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      void loadTeam()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not remove staff.')
+    } finally {
+      setRemoveStaffBusyId(null)
     }
   }
 
@@ -961,7 +1237,8 @@ export default function DashboardPage() {
     action: 'suspend' | 'unsuspend',
     displayName: string
   ) {
-    if (profileRef.current?.business_role !== 'admin') return
+    const role = profileRef.current?.business_role
+    if (role !== 'admin' && role !== 'support') return
     const msg =
       action === 'suspend'
         ? `Suspend ${displayName}? They will not be able to use the app until a staff member unsuspends them.`
@@ -1283,6 +1560,21 @@ export default function DashboardPage() {
     const text = replyDraft.trim()
     const hasImage = !!replyPendingImage
     if (!text && !hasImage) return
+
+    const chTyping = staffThreadChannelRef.current
+    if (chTyping && staffThreadBroadcastReadyRef.current && staffTypingSentRef.current) {
+      void chTyping.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: profile.id, typing: false },
+      })
+      staffTypingSentRef.current = false
+    }
+    if (staffTypingIdleTimerRef.current) {
+      window.clearTimeout(staffTypingIdleTimerRef.current)
+      staffTypingIdleTimerRef.current = null
+    }
+
     setReplyBusy(true)
     try {
       let imageUrl: string | null = null
@@ -1418,7 +1710,7 @@ export default function DashboardPage() {
   }
 
   async function publishAnnouncement() {
-    if (!profile?.business_id || profile.business_role !== 'admin') return
+    if (!profile?.business_id) return
     const rawTitle = postTitle.trim()
     const rawBody = postBody.trim()
     if (!rawBody && !postImage) return
@@ -1510,7 +1802,7 @@ export default function DashboardPage() {
       alert(
         e instanceof Error
           ? e.message
-          : 'Could not post (admin only). For photos, apply storage migration 002_message_images_storage.sql if uploads fail.'
+          : 'Could not publish. If this persists, run migration 017_announcements_staff_write.sql (or ensure announcements RLS allows business members). For photos, apply storage migration 002_message_images_storage.sql if uploads fail.'
       )
     } finally {
       setPostBusy(false)
@@ -1824,7 +2116,8 @@ export default function DashboardPage() {
   }
 
   const isAdmin = profile.business_role === 'admin'
-  const mobileGridClass = navItems.length > 5 ? 'grid-cols-6' : 'grid-cols-5'
+  const mobileGridClass =
+    navItems.length > 6 ? 'grid-cols-7' : navItems.length > 5 ? 'grid-cols-6' : 'grid-cols-5'
   const selectedConvo = convoList.find((c) => c.id === selectedConvoId) || null
   const activeNav = navItems.find((n) => n.id === activeTab)
   const headerTitle = activeNav?.label ?? 'Dashboard'
@@ -1966,11 +2259,18 @@ export default function DashboardPage() {
           {loadError ? (
             <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-[13px] text-red-200">
               <strong className="font-semibold">Data load issue:</strong> {loadError}
-              <p className="text-red-200/80 text-xs mt-1">
-                For <code className="text-red-100">suspended</code> status or moderation log errors, run{' '}
-                <code className="text-red-100">005_account_suspend_moderation.sql</code> in the Supabase SQL editor. Other column errors
-                may need earlier migrations.
-              </p>
+              {/\b(column|relation|does not exist|42703|42P01|suspended|moderation_suspension)\b/i.test(loadError) ? (
+                <p className="text-red-200/80 text-xs mt-1">
+                  For <code className="text-red-100">suspended</code> status or moderation log errors, run{' '}
+                  <code className="text-red-100">005_account_suspend_moderation.sql</code> in the Supabase SQL editor. Other column errors may
+                  need earlier migrations.
+                </p>
+              ) : /pending:/i.test(loadError) ? (
+                <p className="text-red-200/80 text-xs mt-1">
+                  The pending list comes from your Next server at <code className="text-red-100">/api/staff/pending-signups</code>. A fetch error
+                  here is usually connectivity or the dev server — not a database migration.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -1982,7 +2282,7 @@ export default function DashboardPage() {
               <StatCard icon={<ClipboardList className="w-4 h-4" />} label="Reports" value={metrics.reportCount} accent="red" />
               <StatCard icon={<Users className="w-4 h-4" />} label="Active members" value={metrics.members} accent="green" />
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className={`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3'}`}>
               <QuickButton icon={<User2 className="w-4 h-4" />} label="Review Queue" onClick={() => setActiveTab('users')} />
               <QuickButton
                 icon={<Inbox className="w-4 h-4" />}
@@ -1990,8 +2290,9 @@ export default function DashboardPage() {
                 badgeCount={inboxUnreadTotal}
                 onClick={() => setActiveTab('inbox')}
               />
+              <QuickButton icon={<Megaphone className="w-4 h-4" />} label="Post" onClick={() => setActiveTab('post')} />
               {isAdmin ? (
-                <QuickButton icon={<Megaphone className="w-4 h-4" />} label="Post" onClick={() => setActiveTab('post')} />
+                <QuickButton icon={<UserCog className="w-4 h-4" />} label="Team" onClick={() => setActiveTab('team')} />
               ) : (
                 <QuickButton icon={<Send className="w-4 h-4" />} label="Send Notify" onClick={() => setActiveTab('notify')} />
               )}
@@ -2043,7 +2344,7 @@ export default function DashboardPage() {
           </section>
         ) : null}
 
-        {activeTab === 'post' && isAdmin ? (
+        {activeTab === 'post' ? (
           <section className="space-y-3 max-w-4xl">
             <p className="text-[12px] text-[#8892b0] leading-relaxed">
               Goes to the public feed for all approved customers. They can like and comment. Approved customers get an in-app notification when you
@@ -2320,10 +2621,29 @@ export default function DashboardPage() {
                   <code className="text-red-200">profiles.business_id</code> matching conversations for this business.
                 </p>
               ) : (
-                <p className="text-sm text-[#7d86a8]">
-                  When approved customers message your business from the feed, threads show here. Open Support on an announcement to start a
-                  conversation.
-                </p>
+                <div className="text-sm text-[#7d86a8] space-y-2">
+                  <p>
+                    When approved customers message your business from the feed, threads show here. Open <strong className="text-[#c4cbe6]">Support</strong>{' '}
+                    in the customer feed to create a row in <code className="text-[#9ea8cc] text-xs">conversations</code> for this business.
+                  </p>
+                  <p className="text-[13px] text-[#8892b0]">
+                    This list only includes threads where <code className="text-[#9ea8cc] text-xs">business_id</code> matches{' '}
+                    <strong className="text-[#c4cbe6]">{businessInfo?.name ?? 'your business'}</strong>
+                    {businessInfo?.slug ? (
+                      <>
+                        {' '}
+                        (<code className="text-[#9ea8cc] text-xs">slug: {businessInfo.slug}</code>
+                        ).
+                      </>
+                    ) : (
+                      '.'
+                    )}{' '}
+                    On the feed, if <code className="text-[#9ea8cc] text-xs">NEXT_PUBLIC_PRIMARY_SUPPORT_BUSINESS_SLUG</code> is set to your slug, new chats
+                    attach to this business even when the customer follows someone else. Set it to{' '}
+                    <code className="text-[#9ea8cc] text-xs">{businessInfo?.slug ?? 'your-slug'}</code>, restart <code className="text-[#9ea8cc] text-xs">npm run dev</code> or
+                    redeploy. Older threads created under another business stay on that business&apos;s inbox only.
+                  </p>
+                </div>
               )
             ) : (
               <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden lg:grid lg:grid-cols-[minmax(220px,1fr)_minmax(0,1.75fr)] lg:h-[min(calc(100dvh-7.25rem),920px)] lg:min-h-0">
@@ -2658,6 +2978,11 @@ export default function DashboardPage() {
                         <div ref={threadEndRef} className="h-px w-full" aria-hidden />
                       </div>
                       <div className="p-2.5 border-t border-white/10 space-y-2 shrink-0">
+                        {peerCustomerTyping ? (
+                          <p className="text-xs text-[#7d86a8]" aria-live="polite">
+                            {selectedConvo.customerName} is typing…
+                          </p>
+                        ) : null}
                         <input
                           ref={replyImageInputRef}
                           type="file"
@@ -2873,7 +3198,8 @@ export default function DashboardPage() {
         {activeTab === 'users' ? (
           <section className="space-y-4">
             <p className="text-[12px] text-[#8892b0] leading-relaxed">
-              Approve new signups and manage active members for your business. Pending customers cannot use the app until approved.
+              Approve new signups and manage active members for your business. Admins and support use the same tools here; pending customers cannot
+              use the app until approved.
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <StatCard icon={<User2 className="w-4 h-4" />} label="Pending" value={pendingCustomers.length} accent="yellow" />
@@ -2886,13 +3212,6 @@ export default function DashboardPage() {
                 accent="purple"
               />
             </div>
-            {!isAdmin ? (
-              <p className="text-amber-200/90 text-sm rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                Support accounts cannot approve accounts or suspend members. Ask a business admin.
-              </p>
-            ) : null}
-
-            <div className="space-y-3">
               <div className="flex gap-0.5 rounded-[10px] bg-[#0f1834] p-0.5">
                 <button
                   type="button"
@@ -2983,7 +3302,7 @@ export default function DashboardPage() {
                           <div className="grid grid-cols-3 gap-2">
                             <button
                               type="button"
-                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              disabled={reviewBusyId === cust.id}
                               onClick={() => void reviewCustomer(cust.id, 'approve')}
                               className="rounded-xl py-2 font-semibold bg-emerald-500/90 hover:bg-emerald-500 disabled:opacity-40"
                             >
@@ -2991,7 +3310,7 @@ export default function DashboardPage() {
                             </button>
                             <button
                               type="button"
-                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              disabled={reviewBusyId === cust.id}
                               onClick={() => void reviewCustomer(cust.id, 'reject')}
                               className="rounded-xl py-2 font-semibold bg-red-500/90 hover:bg-red-500 disabled:opacity-40"
                             >
@@ -2999,7 +3318,7 @@ export default function DashboardPage() {
                             </button>
                             <button
                               type="button"
-                              disabled={!isAdmin || reviewBusyId === cust.id}
+                              disabled={reviewBusyId === cust.id}
                               onClick={() => void reviewCustomer(cust.id, 'block')}
                               className="rounded-xl py-2 font-semibold bg-white/10 hover:bg-white/15 disabled:opacity-40"
                             >
@@ -3033,8 +3352,7 @@ export default function DashboardPage() {
                               <p className="font-medium truncate text-[14px]">{label}</p>
                               <p className="text-[13px] text-[#7d86a8] truncate">@{m.username}</p>
                             </div>
-                            {isAdmin ? (
-                              <button
+                            <button
                                 type="button"
                                 disabled={modBusyId === m.id}
                                 onClick={() => void moderateSuspension(m.id, 'suspend', label)}
@@ -3043,7 +3361,6 @@ export default function DashboardPage() {
                                 <Ban className="w-4 h-4 shrink-0" />
                                 {modBusyId === m.id ? '…' : 'Suspend'}
                               </button>
-                            ) : null}
                           </div>
                         )
                       })
@@ -3070,8 +3387,7 @@ export default function DashboardPage() {
                               <p className="font-medium truncate text-[14px]">{label}</p>
                               <p className="text-[13px] text-[#7d86a8] truncate">@{m.username}</p>
                             </div>
-                            {isAdmin ? (
-                              <button
+                            <button
                                 type="button"
                                 disabled={modBusyId === m.id}
                                 onClick={() => void moderateSuspension(m.id, 'unsuspend', label)}
@@ -3080,7 +3396,6 @@ export default function DashboardPage() {
                                 <UserCheck className="w-4 h-4 shrink-0" />
                                 {modBusyId === m.id ? '…' : 'Unsuspend'}
                               </button>
-                            ) : null}
                           </div>
                         )
                       })
@@ -3088,6 +3403,133 @@ export default function DashboardPage() {
                   </div>
                 </div>
               ) : null}
+          </section>
+        ) : null}
+
+        {activeTab === 'team' && isAdmin ? (
+          <section className="space-y-4 max-w-3xl">
+            <p className="text-[12px] text-[#8892b0] leading-relaxed">
+              Everyone on the business team shares this dashboard: inbox, users, posts, and reports. Customers see each agent&apos;s name and
+              @handle in support threads. Only admins can add or remove support accounts below.
+            </p>
+            {isAdmin ? (
+              <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-white">Add support staff</h3>
+                <p className="text-[11px] text-[#8892b0]">
+                  They sign in at Relay with <strong className="text-[#c4cbe6]">email + password</strong> (same login page as you). Username is their
+                  public <strong className="text-[#c4cbe6]">@handle</strong> in threads (lowercase, digits, underscore; 3–30 chars). Only{' '}
+                  <strong className="text-[#c4cbe6]">first name</strong> is collected here (display name in chat). Up to 4 support agents per business.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  className="rounded-xl border border-white/10 bg-[#0c1428] px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]/50"
+                  placeholder="First name"
+                  value={newStaffFirst}
+                  onChange={(e) => setNewStaffFirst(e.target.value)}
+                  autoComplete="given-name"
+                />
+                <input
+                  type="email"
+                  className="rounded-xl border border-white/10 bg-[#0c1428] px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]/50"
+                  placeholder="Work email (their login)"
+                  value={newStaffEmail}
+                  onChange={(e) => setNewStaffEmail(e.target.value)}
+                  autoComplete="off"
+                />
+                <input
+                  className="rounded-xl border border-white/10 bg-[#0c1428] px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]/50 sm:col-span-2"
+                  placeholder="Username — public @handle (e.g. alex_support)"
+                  value={newStaffUsername}
+                  onChange={(e) => setNewStaffUsername(e.target.value.replace(/\s+/g, '').replace(/^@+/, ''))}
+                  autoComplete="off"
+                />
+                <div className="relative sm:col-span-2">
+                  <input
+                    type={showNewStaffPassword ? 'text' : 'password'}
+                    className="w-full rounded-xl border border-white/10 bg-[#0c1428] px-3 py-2.5 pr-10 text-sm outline-none focus:border-[#6f54ff]/50"
+                    placeholder="Password (min 8 characters)"
+                    value={newStaffPassword}
+                    onChange={(e) => setNewStaffPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewStaffPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6f7896] hover:text-white p-0.5"
+                    aria-label={showNewStaffPassword ? 'Hide passwords' : 'Show passwords'}
+                  >
+                    {showNewStaffPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="relative sm:col-span-2">
+                  <input
+                    type={showNewStaffPassword ? 'text' : 'password'}
+                    className="w-full rounded-xl border border-white/10 bg-[#0c1428] px-3 py-2.5 pr-10 text-sm outline-none focus:border-[#6f54ff]/50"
+                    placeholder="Confirm password"
+                    value={newStaffPasswordConfirm}
+                    onChange={(e) => setNewStaffPasswordConfirm(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewStaffPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6f7896] hover:text-white p-0.5"
+                    aria-label={showNewStaffPassword ? 'Hide passwords' : 'Show passwords'}
+                  >
+                    {showNewStaffPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={createStaffBusy}
+                onClick={() => void createSupportStaff()}
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40 flex items-center justify-center gap-2"
+              >
+                {createStaffBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {createStaffBusy ? 'Creating…' : 'Create staff account'}
+              </button>
+            </div>
+            ) : null}
+
+            <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/[0.08] flex items-center justify-between gap-2">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8892b0]">Team roster</h3>
+                {teamLoadBusy ? <Loader2 className="w-4 h-4 animate-spin text-[#8d63ff]" /> : null}
+              </div>
+              <div className="divide-y divide-white/[0.08]">
+                {teamRows.length === 0 && !teamLoadBusy ? (
+                  <p className="px-3 py-5 text-[13px] text-[#8892b0]">No team rows loaded.</p>
+                ) : (
+                  teamRows.map((row) => {
+                    const label = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || row.username
+                    const isSupport = row.business_role === 'support'
+                    const removed = Boolean(row.deleted_at)
+                    return (
+                      <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-white truncate">{label}</p>
+                          <p className="text-[12px] text-[#7d86a8] truncate">
+                            @{row.username} · {row.business_role === 'admin' ? 'Admin' : 'Support'}
+                            {removed ? <span className="text-red-300/90"> · removed</span> : null}
+                          </p>
+                        </div>
+                        {isAdmin && isSupport && !removed ? (
+                          <button
+                            type="button"
+                            disabled={removeStaffBusyId === row.id}
+                            onClick={() => void removeSupportMember(row.id, label)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[12px] text-red-200 hover:bg-red-500/20 disabled:opacity-40"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                            {removeStaffBusyId === row.id ? '…' : 'Remove'}
+                          </button>
+                        ) : null}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
             </div>
           </section>
         ) : null}

@@ -308,6 +308,7 @@ export default function NotificationsPage() {
         >
           <Link
             href={homeHref}
+            prefetch={false}
             className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#8892b0]"
           >
             <Home className="w-[22px] h-[22px]" strokeWidth={2} />

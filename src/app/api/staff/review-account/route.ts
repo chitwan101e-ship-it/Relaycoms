@@ -33,8 +33,13 @@ export async function POST(req: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (staffErr || !staff || staff.role !== 'business' || staff.business_role !== 'admin') {
-      return NextResponse.json({ error: 'Only business admins can review customer accounts.' }, { status: 403 })
+    if (
+      staffErr ||
+      !staff ||
+      staff.role !== 'business' ||
+      (staff.business_role !== 'admin' && staff.business_role !== 'support')
+    ) {
+      return NextResponse.json({ error: 'Only business team members can review customer accounts.' }, { status: 403 })
     }
 
     const admin = createServiceClient()

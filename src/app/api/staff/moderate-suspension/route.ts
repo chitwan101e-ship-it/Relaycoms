@@ -4,7 +4,7 @@ import { notifyBusinessTeamAdmins } from '@/lib/notifyStaffAdmins'
 
 /**
  * Suspend or unsuspend a customer (account_status = suspended | approved).
- * Appends a row to moderation_suspension_events. Admin-only, service role for writes.
+ * Appends a row to moderation_suspension_events. Business admins and support agents; service role for writes.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -35,8 +35,14 @@ export async function POST(req: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (staffErr || !staff || staff.role !== 'business' || staff.business_role !== 'admin' || !staff.business_id) {
-      return NextResponse.json({ error: 'Only business admins can suspend or unsuspend customers.' }, { status: 403 })
+    if (
+      staffErr ||
+      !staff ||
+      staff.role !== 'business' ||
+      !staff.business_id ||
+      (staff.business_role !== 'admin' && staff.business_role !== 'support')
+    ) {
+      return NextResponse.json({ error: 'Only business team members can suspend or unsuspend customers.' }, { status: 403 })
     }
 
     if (user.id === targetUserId) {

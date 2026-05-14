@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -31,10 +31,72 @@ export default function LoginPage() {
     if (q.get('reset') === 'ok') setInfo('Password updated. Sign in with your new password.')
   }, [])
 
+  const finalizeSessionRouting = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) throw new Error('No user after sign-in')
+
+    const { data: prof, error: pErr } = await supabase
+      .from('profiles')
+      .select('role, business_role, account_status, deleted_at')
+      .eq('id', user.id)
+      .single()
+
+    if (pErr || !prof) {
+      await supabase.auth.signOut()
+      throw new Error(
+        'No profile found for this account. If you are staff, your admin should add you from the dashboard. Customers should complete Create Account first.'
+      )
+    }
+
+    if ((prof as { deleted_at?: string | null }).deleted_at) {
+      await supabase.auth.signOut()
+      throw new Error('This account has been removed.')
+    }
+
+    if (prof.role === 'customer' && prof.account_status === 'suspended') {
+      router.replace('/account-suspended')
+      return
+    }
+
+    if (prof.role === 'customer' && prof.account_status !== 'approved') {
+      router.replace('/pending-approval')
+      return
+    }
+
+    if (prof.account_status !== 'approved') {
+      await supabase.auth.signOut()
+      throw new Error(
+        prof.account_status === 'pending'
+          ? 'Your staff account is pending approval.'
+          : prof.account_status === 'rejected'
+            ? 'Your access request was rejected.'
+            : prof.account_status === 'suspended'
+              ? 'Your account is suspended. Contact support.'
+              : 'Your account is blocked. Contact support.'
+      )
+    }
+
+    if (prof.role === 'business' && prof.business_role) {
+      router.replace('/dashboard')
+      return
+    }
+
+    if (prof.role === 'business' && !prof.business_role) {
+      await supabase.auth.signOut()
+      throw new Error(
+        'Your staff profile is incomplete. Ask your business admin to fix your account or recreate it from the dashboard Team tab.'
+      )
+    }
+
+    router.replace('/feed')
+  }, [router, supabase])
+
   async function sendPasswordReset() {
     const em = email.trim()
-    if (!em) {
-      setError('Enter your email address first.')
+    if (!em.includes('@')) {
+      setError('Password reset only works with an email address. Legacy staff-only IDs cannot use this link.')
       return
     }
     setError('')
@@ -59,72 +121,32 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      const { error: signErr } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      })
-      if (signErr) throw signErr
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) throw new Error('No user after sign-in')
-
-      const { data: prof, error: pErr } = await supabase
-        .from('profiles')
-        .select('role, business_role, account_status, deleted_at')
-        .eq('id', user.id)
-        .single()
-
-      if (pErr || !prof) {
-        await supabase.auth.signOut()
-        throw new Error(
-          'No profile row for this account. Staff accounts must be linked in public.profiles (Supabase); customers complete Create Account first.'
-        )
+      const identifier = email.trim()
+      if (!identifier) {
+        throw new Error('Enter your email (or legacy staff ID).')
       }
 
-      if ((prof as { deleted_at?: string | null }).deleted_at) {
-        await supabase.auth.signOut()
-        throw new Error('This account has been removed.')
+      const useStaffId = !identifier.includes('@')
+
+      if (useStaffId) {
+        const r = await fetch('/api/auth/staff-sign-in', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ staffId: identifier, password }),
+        })
+        const j = (await r.json().catch(() => ({}))) as { error?: string }
+        if (!r.ok) throw new Error(j.error || 'Sign in failed')
+        await supabase.auth.getSession()
+      } else {
+        const { error: signErr } = await supabase.auth.signInWithPassword({
+          email: identifier,
+          password,
+        })
+        if (signErr) throw signErr
       }
 
-      if (prof.role === 'customer' && prof.account_status === 'suspended') {
-        router.replace('/account-suspended')
-        return
-      }
-
-      // Customers waiting on admin approval → dedicated screen (session kept).
-      if (prof.role === 'customer' && prof.account_status !== 'approved') {
-        router.replace('/pending-approval')
-        return
-      }
-
-      if (prof.account_status !== 'approved') {
-        await supabase.auth.signOut()
-        throw new Error(
-          prof.account_status === 'pending'
-            ? 'Your staff account is pending approval.'
-            : prof.account_status === 'rejected'
-              ? 'Your access request was rejected.'
-              : prof.account_status === 'suspended'
-                ? 'Your account is suspended. Contact support.'
-                : 'Your account is blocked. Contact support.'
-        )
-      }
-
-      if (prof.role === 'business' && prof.business_role) {
-        router.replace('/dashboard')
-        return
-      }
-
-      if (prof.role === 'business' && !prof.business_role) {
-        await supabase.auth.signOut()
-        throw new Error(
-          'Staff profile is incomplete: set business_role to admin or support and business_id in public.profiles (Supabase).'
-        )
-      }
-
-      router.replace('/feed')
+      await finalizeSessionRouting()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Sign in failed')
     } finally {
@@ -155,14 +177,18 @@ export default function LoginPage() {
                 Email
               </label>
               <input
-                type="email"
-                autoComplete="email"
+                type="text"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@email.com"
                 className={inp}
                 required
               />
+              <p className="text-[11px] text-[#5c647e] mt-1.5">
+                Customers and business team: sign in with email + password. If you were given a legacy staff ID (no @) instead of email, enter that
+                here — same password field.
+              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-[#7f8bad] uppercase tracking-wide mb-1.5">

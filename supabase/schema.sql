@@ -477,9 +477,9 @@ create policy "profiles_read"     on public.profiles for select using (true);
 create policy "otp_none"          on public.otp_tokens for all  using (false);
 
 create policy "announce_read"     on public.announcements for select using (true);
-create policy "announce_insert"   on public.announcements for insert with check (public.is_business_admin(business_id));
-create policy "announce_update"   on public.announcements for update using (public.is_business_admin(business_id));
-create policy "announce_delete"   on public.announcements for delete using (public.is_business_admin(business_id));
+create policy "announce_insert"   on public.announcements for insert with check (public.is_business_member(business_id));
+create policy "announce_update"   on public.announcements for update using (public.is_business_member(business_id));
+create policy "announce_delete"   on public.announcements for delete using (public.is_business_member(business_id));
 
 create policy "reactions_read"    on public.reactions for select using (true);
 create policy "reactions_own"     on public.reactions for all    using (user_id = auth.uid());

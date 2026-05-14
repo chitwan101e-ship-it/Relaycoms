@@ -25,7 +25,8 @@ export async function middleware(req: NextRequest) {
   // Never run auth/session or rewrites on Next internals or public static files. If these requests
   // are handled here (matcher edge cases, *.localhost, etc.), chunk URLs 404 and the app stays blank.
   if (
-    pathname.startsWith('/_next/') ||
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/__nextjs') ||
     pathname === '/favicon.ico' ||
     /\.(?:ico|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|eot)$/i.test(pathname)
   ) {
@@ -56,7 +57,9 @@ export async function middleware(req: NextRequest) {
   // ── Subdomain request: rewrite to /business/[slug]/... only for public business pages
   // Keep app routes (/feed, /profile, etc.) on their original paths.
   const isAppPath = APP_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
-  if (subdomain && subdomain !== 'www' && !isAppPath) {
+  const isNextAsset =
+    pathname.startsWith('/_next') || pathname.startsWith('/__nextjs') || pathname === '/favicon.ico'
+  if (subdomain && subdomain !== 'www' && !isAppPath && !isNextAsset) {
     // Rewrite so Next.js serves /business/[slug]/... routes
     url.pathname = `/business/${subdomain}${pathname}`
     const res = NextResponse.rewrite(url, { request: req })
@@ -75,6 +78,14 @@ async function withSupabaseSession(req: NextRequest, res: NextResponse) {
   // Allow local UI rendering before environment variables are configured.
   if (!supabaseUrl || !supabaseAnonKey) return res
 
+  // Next.js prefetches RSC payloads in the background (fetchServerResponse). Awaiting Supabase
+  // session refresh on those requests competes with real traffic and often surfaces as dev overlay
+  // errors when Supabase is slow or the dev server is busy. Real navigations still run this block.
+  const prefetch = req.headers.get('next-router-prefetch') === '1'
+  if (prefetch) {
+    return res
+  }
+
   try {
     const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
@@ -90,7 +101,13 @@ async function withSupabaseSession(req: NextRequest, res: NextResponse) {
         },
       },
     })
-    await supabase.auth.getUser()
+    // Do not block indefinitely: slow/unreachable Supabase would stall every page and API call.
+    await Promise.race([
+      supabase.auth.getUser(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 12_000)
+      }),
+    ])
   } catch {
     // Stale/invalid refresh token or transient Supabase errors — still serve the page.
   }
@@ -99,7 +116,7 @@ async function withSupabaseSession(req: NextRequest, res: NextResponse) {
 
 export const config = {
   matcher: [
-    // Match all paths except Next internals and common static assets. Broad `/_next/` avoids dev chunk 404s.
-    '/((?!_next/|favicon\\.ico|.*\\.(?:ico|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|eot)$).*)',
+    // Match all paths except Next internals and common static assets. Exclude any `/_next…` (not only `/_next/…`) so dev chunks never hit rewrites.
+    '/((?!_next|__nextjs|favicon\\.ico|.*\\.(?:ico|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|eot)$).*)',
   ],
 }
