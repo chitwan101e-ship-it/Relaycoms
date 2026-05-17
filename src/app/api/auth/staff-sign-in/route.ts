@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     const username = normalizeStaffUsername(staffId)
     if (!username) {
-      return NextResponse.json({ error: 'Invalid staff ID.' }, { status: 400 })
+      return NextResponse.json({ error: 'Invalid username.' }, { status: 400 })
     }
 
     const admin = createServiceClient()
@@ -33,11 +33,11 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if (pErr || !prof) {
-      return NextResponse.json({ error: 'Invalid staff ID or password.' }, { status: 401 })
+      return NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 })
     }
 
     if (prof.role !== 'business' || !prof.business_role) {
-      return NextResponse.json({ error: 'Invalid staff ID or password.' }, { status: 401 })
+      return NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 })
     }
 
     if ((prof as { deleted_at?: string | null }).deleted_at) {
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     const { data: authRes, error: authErr } = await admin.auth.admin.getUserById(prof.id as string)
     if (authErr || !authRes?.user?.email) {
-      return NextResponse.json({ error: 'Invalid staff ID or password.' }, { status: 401 })
+      return NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 })
     }
 
     const email = authRes.user.email
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     const { error: signErr } = await supabase.auth.signInWithPassword({ email, password })
     if (signErr) {
-      return NextResponse.json({ error: 'Invalid staff ID or password.' }, { status: 401 })
+      return NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 })
     }
 
     return res

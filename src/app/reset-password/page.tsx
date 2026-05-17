@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import RelayLogo from '@/components/RelayLogo'
+import { TURNSTILE_LOAD_ERROR } from '@/lib/userFacingErrors'
 import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile'
 
@@ -39,9 +40,7 @@ function ResetPasswordInner() {
     const timer = window.setTimeout(() => {
       const loaded = Boolean((window as Window & { turnstile?: unknown }).turnstile)
       if (!loaded && !turnstileScriptReady) {
-        setError(
-          'Security widget failed to load. Try allowlisting challenges.cloudflare.com or use http://localhost:3000.'
-        )
+        setError(TURNSTILE_LOAD_ERROR)
       }
     }, 4000)
     return () => window.clearTimeout(timer)
@@ -50,7 +49,7 @@ function ResetPasswordInner() {
   const sendCode = useCallback(async () => {
     const id = identifier.trim()
     if (!id) {
-      setError('Enter your email or legacy staff ID.')
+      setError('Enter your email or @username.')
       return
     }
     if (showTurnstile && !turnstileToken) {
@@ -71,7 +70,7 @@ function ResetPasswordInner() {
       })
       const data = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) throw new Error(data.error || 'Could not send code.')
-      setInfo('If an account exists for that email or staff ID, we sent a 6-digit code. Check your inbox.')
+      setInfo('If an account exists for that email or username, we sent a 6-digit code. Check your inbox.')
       setStep(2)
       turnstileRef.current?.reset()
       setTurnstileToken(null)
@@ -137,7 +136,7 @@ function ResetPasswordInner() {
             <h1 className="text-xl font-bold text-white">Reset password</h1>
             <p className="text-[#7f8bad] text-sm mt-2">
               {step === 1
-                ? 'Enter the same email or staff ID you use on the sign-in page. We will email you a one-time code.'
+                ? 'Enter the same email or @username you use to sign in. We will email you a one-time code.'
                 : 'Enter the code from your email and choose a new password.'}
             </p>
           </div>
@@ -149,7 +148,7 @@ function ResetPasswordInner() {
               className="flex items-center gap-1 text-sm text-[#8d63ff] hover:underline mb-4"
             >
               <ArrowLeft className="w-4 h-4" />
-              Change email or staff ID
+              Change email or username
             </button>
           ) : null}
 
@@ -157,14 +156,14 @@ function ResetPasswordInner() {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-[#7f8bad] uppercase tracking-wide mb-1.5">
-                  Email or staff ID
+                  Email or username
                 </label>
                 <input
                   type="text"
                   autoComplete="username"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="you@company.com or staff_handle"
+                  placeholder="you@company.com or @username"
                   className={inp}
                 />
               </div>

@@ -48,7 +48,7 @@ export default function LoginPage() {
     try {
       const identifier = email.trim()
       if (!identifier) {
-        throw new Error('Enter your email (or legacy staff ID).')
+        throw new Error('Enter your email or @username.')
       }
 
       const useStaffId = !identifier.includes('@')
@@ -111,8 +111,7 @@ export default function LoginPage() {
                 required
               />
               <p className="text-[11px] text-[#5c647e] mt-1.5">
-                Customers and business team: sign in with email + password. If you were given a legacy staff ID (no @) instead of email, enter that
-                here — same password field.
+                Sign in with your email and password. Staff can use their @username instead of email.
               </p>
             </div>
             <div>

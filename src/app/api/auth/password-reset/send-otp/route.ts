@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
 
     const trimmed = identifier.trim()
     if (!trimmed) {
-      return NextResponse.json({ error: 'Enter your email or staff ID.' }, { status: 400 })
+      return NextResponse.json({ error: 'Enter your email or @username.' }, { status: 400 })
     }
 
     const rateEmail = trimmed.includes('@')
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'This account uses a legacy staff-only email that cannot receive mail. Ask your business admin to add a real work email for your account, or sign in with your work email if you already have one.',
+            'This account cannot receive email yet. Ask your business admin to add a work email to your profile, or sign in with your work email if you already have one.',
         },
         { status: 400 }
       )

@@ -4,12 +4,14 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { redirectIfAuthenticated } from '@/lib/authRouting'
 import RelayLogo from '@/components/RelayLogo'
-import { User, Eye, EyeOff, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react'
+import { User, Eye, EyeOff, ArrowLeft, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile'
 import { combineInternationalPhone, COUNTRY_DIAL_OPTIONS } from '@/lib/countryDialCodes'
 import { normalizePhoneForDedup } from '@/lib/phoneNormalize'
 import { SIGNUP_OTP_VERIFICATION_FAILED } from '@/lib/signupOtp'
+import { TURNSTILE_LOAD_ERROR, TURNSTILE_WIDGET_ERROR } from '@/lib/userFacingErrors'
+import { PendingApprovalPanel } from '@/components/PendingApprovalPanel'
 
 type Step = 1 | 2 | 3 | 4
 
@@ -52,12 +54,14 @@ export default function SignUpPage() {
   const [turnstileScriptReady, setTurnstileScriptReady] = useState(false)
   const [turnstileUiError, setTurnstileUiError] = useState<string | null>(null)
   const turnstileOtpRef = useRef<TurnstileInstance>(null)
+  const [signupNeedsSignIn, setSignupNeedsSignIn] = useState(false)
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
   const otpEnabled = process.env.NEXT_PUBLIC_ENABLE_OTP === 'true'
 
   useEffect(() => {
+    if (step === 4) return
     let cancelled = false
     void (async () => {
       if (cancelled) return
@@ -66,16 +70,14 @@ export default function SignUpPage() {
     return () => {
       cancelled = true
     }
-  }, [router, supabase])
+  }, [router, supabase, step])
 
   useEffect(() => {
     if (!showTurnstile) return
     const timer = window.setTimeout(() => {
       const loaded = Boolean((window as Window & { turnstile?: unknown }).turnstile)
       if (!loaded && !turnstileScriptReady) {
-        setTurnstileUiError(
-          'Security widget failed to load. Try: allowlist challenges.cloudflare.com, use http://localhost:3000 (not 127.0.0.1 unless added in Cloudflare), disable extensions, restart npm run dev.'
-        )
+        setTurnstileUiError(TURNSTILE_LOAD_ERROR)
       }
     }, 4000)
     return () => window.clearTimeout(timer)
@@ -226,12 +228,8 @@ export default function SignUpPage() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
       })
-      if (signErr) {
-        setStep(4)
-        return
-      }
-
-      router.replace('/pending-approval')
+      setSignupNeedsSignIn(Boolean(signErr))
+      setStep(4)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Registration failed')
     } finally {
@@ -306,34 +304,34 @@ export default function SignUpPage() {
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
-              <h2 className="font-display font-bold text-2xl mb-1 text-white">Create your account</h2>
-              <p className="text-[#7f8bad] text-sm mb-5">
-                Customer accounts only. Staff accounts are created by your team in the dashboard.
-              </p>
+              <h2 className="font-display font-bold text-2xl mb-5 text-white">Create your account</h2>
 
               <div className="rounded-xl border border-[#8d63ff]/25 bg-[#8d63ff]/10 px-3 py-2.5 text-xs text-[#c4b5fc] mb-5 flex gap-2">
                 <User className="w-4 h-4 shrink-0 mt-0.5 text-[#8d63ff]" />
                 <span>
-                  You will join as a <strong className="text-white">customer</strong>. Relay staff review new signups
-                  before you can sign in.
+                  You will join as a <strong className="text-white">customer</strong>. Use your{' '}
+                  <strong className="text-white">legal first and last name</strong> below — nicknames or fake names may
+                  delay approval. Staff review every signup before you can sign in.
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Field label="First name">
+                <Field label="Legal first name">
                   <input
                     value={form.firstName}
                     onChange={(e) => set('firstName', e.target.value)}
                     placeholder="Jane"
                     className={inp}
+                    autoComplete="given-name"
                   />
                 </Field>
-                <Field label="Last name">
+                <Field label="Legal last name">
                   <input
                     value={form.lastName}
                     onChange={(e) => set('lastName', e.target.value)}
                     placeholder="Doe"
                     className={inp}
+                    autoComplete="family-name"
                   />
                 </Field>
               </div>
@@ -452,7 +450,7 @@ export default function SignUpPage() {
                       setTurnstileScriptReady(true)
                       setTurnstileUiError(null)
                     }}
-                    onError={() => setTurnstileUiError('Security widget error. Refresh and try again.')}
+                    onError={() => setTurnstileUiError(TURNSTILE_WIDGET_ERROR)}
                     onSuccess={(token) => {
                       setTurnstileOtpToken(token)
                       setTurnstileUiError(null)
@@ -462,10 +460,9 @@ export default function SignUpPage() {
                   />
                 </div>
               ) : null}
-              {showTurnstile && !turnstileUiError ? (
+              {showTurnstile && !turnstileUiError && !turnstileOtpToken ? (
                 <p className="text-[#6f7896] text-[11px] mt-2 mb-1 text-center">
-                  Cloudflare Turnstile should appear above. If nothing shows, use <strong className="text-[#9ea8cc]">Managed</strong>{' '}
-                  mode in Turnstile (not Invisible).
+                  Complete the security check above to continue.
                 </p>
               ) : null}
               {showTurnstile && turnstileUiError ? (
@@ -608,30 +605,9 @@ export default function SignUpPage() {
             </>
           )}
 
-          {/* Step 4: Success */}
+          {/* Step 4: Request submitted + waiting for approval */}
           {step === 4 && (
-            <div className="text-center py-4">
-              <div className="w-20 h-20 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
-              </div>
-              <h2 className="font-display font-bold text-2xl mb-2 text-white">Request submitted</h2>
-              <p className="text-[#7f8bad] text-sm mb-6">
-                Your account is waiting for approval from the team. If you are not redirected automatically, sign in with
-                the same email and password — you will land on a page that updates when you are approved.
-              </p>
-              <div className="rounded-xl border border-white/10 bg-[#11172a] p-4 text-left space-y-2 text-sm mb-6">
-                <NextStep>Follow businesses you care about</NextStep>
-                <NextStep>Browse the latest announcements</NextStep>
-                <NextStep>Start a conversation with a business</NextStep>
-              </div>
-              <button
-                type="button"
-                onClick={() => router.push('/login')}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity"
-              >
-                Go to sign in
-              </button>
-            </div>
+            <PendingApprovalPanel embedded needsSignIn={signupNeedsSignIn} />
           )}
         </div>
       </main>
@@ -667,11 +643,3 @@ function ReviewRow({ label, value, highlight }: { label: string; value: string; 
   )
 }
 
-function NextStep({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 text-[#c7cde2]">
-      <CheckCircle2 className="w-4 h-4 text-[#8d63ff] shrink-0" />
-      {children}
-    </div>
-  )
-}

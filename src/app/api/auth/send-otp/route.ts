@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { getClientIp } from '@/lib/clientIp'
 import { rateLimitSendOtp } from '@/lib/authRateLimit'
 import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
+import { OTP_RESEND_KEY_ERROR, OTP_SEND_CONFIG_ERROR } from '@/lib/userFacingErrors'
 import crypto from 'crypto'
 
 function getResend() {
@@ -110,23 +111,12 @@ export async function POST(req: NextRequest) {
     console.error('[send-otp]', err)
 
     if (message.includes('RESEND_API_KEY is not configured')) {
-      return NextResponse.json(
-        {
-          error: 'OTP email provider is not configured. Set RESEND_API_KEY in .env.local and restart the dev server.',
-        },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: OTP_SEND_CONFIG_ERROR }, { status: 500 })
     }
 
     const lower = message.toLowerCase()
     if (lower.includes('api key is invalid') || lower.includes('invalid api key')) {
-      return NextResponse.json(
-        {
-          error:
-            'Resend rejected the API key (invalid or revoked). Create a new key at resend.com, put it in RESEND_API_KEY in .env.local, then restart `npm run dev`.',
-        },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: OTP_RESEND_KEY_ERROR }, { status: 500 })
     }
 
     if (lower.includes('domain') || lower.includes('from')) {

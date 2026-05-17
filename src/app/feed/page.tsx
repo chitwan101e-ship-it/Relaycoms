@@ -145,9 +145,9 @@ function greetingByHour(d = new Date()) {
 
 function greetingSubtitle(d = new Date()) {
   const hour = d.getHours()
-  if (hour < 12) return 'Start the day with the latest from your organization.'
+  if (hour < 12) return 'Start the day with the latest on your feed.'
   if (hour < 17) return 'Catch up on announcements and messages in one place.'
-  if (hour < 22) return 'Here is what is new from your team today.'
+  if (hour < 22) return 'See what is new from businesses you follow today.'
   return 'Wind down — your feed and messages are right here when you need them.'
 }
 
@@ -1824,7 +1824,7 @@ export default function FeedPage() {
                 <MessageCircle className="w-5 h-5 shrink-0 ml-1" strokeWidth={2.5} />
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-sm">Messages</div>
-                  <div className="text-[11px] text-white/85">Your organization · live</div>
+                  <div className="text-[11px] text-white/85">Messages · live</div>
                 </div>
               </>
             )}
