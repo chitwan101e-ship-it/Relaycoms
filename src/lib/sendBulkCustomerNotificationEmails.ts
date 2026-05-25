@@ -12,7 +12,7 @@ export type BulkNotificationEmailResult = {
   failed: number
 }
 
-async function lookupCustomerEmail(
+export async function lookupCustomerEmail(
   admin: SupabaseClient,
   userId: string
 ): Promise<string | null> {
@@ -95,4 +95,52 @@ export async function sendBulkCustomerNotificationEmails(
   }
 
   return { sent, skipped, failed }
+}
+
+/** One customer — e.g. when staff sends a support reply (works on phone via the mail app). */
+export async function sendSingleCustomerNotificationEmail(
+  admin: SupabaseClient,
+  opts: {
+    userId: string
+    subject: string
+    title: string
+    body: string
+    linkPath: string
+    ctaLabel?: string
+    brandName?: string
+  }
+): Promise<'sent' | 'skipped' | 'failed'> {
+  const resend = getResend()
+  if (!resend) {
+    console.warn('[customer-notification-email] RESEND_API_KEY not set — skipping')
+    return 'skipped'
+  }
+
+  const email = await lookupCustomerEmail(admin, opts.userId)
+  if (!email) return 'skipped'
+
+  const brandName = opts.brandName?.trim() || 'Juwa Bros'
+  const ctaLabel = opts.ctaLabel?.trim() || 'Open message'
+  const linkPath = opts.linkPath.startsWith('/') ? opts.linkPath : `/${opts.linkPath}`
+  const linkUrl = `${getPublicSiteUrl()}${linkPath}`
+  const html = renderCustomerNotificationEmailHtml({
+    brandName,
+    title: opts.title,
+    body: opts.body,
+    ctaLabel,
+    linkUrl,
+  })
+
+  const { error } = await resend.emails.send({
+    from: getResendFromAddress(),
+    to: email,
+    subject: opts.subject,
+    html,
+  })
+
+  if (error) {
+    console.error('[customer-notification-email]', opts.userId, error)
+    return 'failed'
+  }
+  return 'sent'
 }

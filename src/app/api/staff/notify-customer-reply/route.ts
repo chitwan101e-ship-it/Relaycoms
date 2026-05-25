@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { sendSingleCustomerNotificationEmail } from '@/lib/sendBulkCustomerNotificationEmails'
 
 /**
  * Inserts the in-app "support_reply" notification for the customer after staff sends a message.
@@ -78,7 +79,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: insErr.message }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true })
+    const customerId = convo.customer_id as string
+    const { data: biz } = await admin.from('businesses').select('name').eq('id', bid).maybeSingle()
+    const brandName = (biz as { name?: string } | null)?.name?.trim() || 'Relay'
+
+    const emailStatus = await sendSingleCustomerNotificationEmail(admin, {
+      userId: customerId,
+      subject: 'New reply from the team',
+      title: 'New reply from the team',
+      body: preview,
+      linkPath: '/feed?openChat=1',
+      ctaLabel: 'Open message',
+      brandName,
+    })
+
+    return NextResponse.json({ ok: true, email: emailStatus })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Server error'
     return NextResponse.json({ error: msg }, { status: 500 })

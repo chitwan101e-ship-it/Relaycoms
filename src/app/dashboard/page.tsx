@@ -39,6 +39,10 @@ import {
   X,
 } from 'lucide-react'
 import { ContentModerationMenu } from '@/components/ContentModerationMenu'
+import { ChatMessageImage } from '@/components/ChatMessageImage'
+import { LinkifiedText } from '@/components/LinkifiedText'
+import { DesktopNotificationPrompt } from '@/components/DesktopNotificationPrompt'
+import { useDesktopMessageNotifications } from '@/hooks/useDesktopMessageNotifications'
 
 type AppTab = 'home' | 'post' | 'inbox' | 'users' | 'notify' | 'reports' | 'team'
 type UsersPanelTab = 'pending' | 'active' | 'suspended'
@@ -98,6 +102,9 @@ type ThreadMessage = {
 
 const THREAD_MESSAGE_SELECT =
   'id, sender_id, body, created_at, image_url, read, read_at, profiles ( username, first_name, last_name, business_role )'
+
+/** Inbox shows the N most recently updated threads (not expired — older threads drop off when volume is high). */
+const INBOX_THREAD_LIMIT = 500
 
 function oneEmbed<T>(v: T | T[] | null | undefined): T | null {
   if (v == null) return null
@@ -396,8 +403,18 @@ export default function DashboardPage() {
   const [modBusyId, setModBusyId] = useState<string | null>(null)
   const [memberMessageDrafts, setMemberMessageDrafts] = useState<Record<string, string>>({})
   const [memberSendBusyId, setMemberSendBusyId] = useState<string | null>(null)
+  const [memberStartBusyId, setMemberStartBusyId] = useState<string | null>(null)
   const [memberComposeOpenId, setMemberComposeOpenId] = useState<string | null>(null)
   const [activeMemberQuery, setActiveMemberQuery] = useState('')
+  const [activeMemberLookup, setActiveMemberLookup] = useState<{
+    id: string
+    username: string
+    first_name: string | null
+    last_name: string | null
+    account_status: string
+    email: string | null
+  } | null>(null)
+  const [activeMemberLookupBusy, setActiveMemberLookupBusy] = useState(false)
   const [dashRefreshing, setDashRefreshing] = useState(false)
   const [inboxContactOpen, setInboxContactOpen] = useState(false)
   const [staffNotifyUnread, setStaffNotifyUnread] = useState(0)
@@ -409,6 +426,8 @@ export default function DashboardPage() {
   const [newInboxLabelName, setNewInboxLabelName] = useState('')
   const [inboxLabelCreateBusy, setInboxLabelCreateBusy] = useState(false)
   const [inboxSearchQuery, setInboxSearchQuery] = useState('')
+  const [inboxSearchExtraConvos, setInboxSearchExtraConvos] = useState<ConvoListItem[]>([])
+  const [inboxSearchExtraBusy, setInboxSearchExtraBusy] = useState(false)
   const [cannedReplies, setCannedReplies] = useState<CannedReplyRow[]>([])
   const [cannedPopoverOpen, setCannedPopoverOpen] = useState(false)
   const cannedPopoverRef = useRef<HTMLDivElement>(null)
@@ -532,7 +551,7 @@ export default function DashboardPage() {
           .select('id, customer_id, updated_at')
           .eq('business_id', bid)
           .order('updated_at', { ascending: false })
-          .limit(80),
+          .limit(INBOX_THREAD_LIMIT),
         pendingFetch,
         supabase
           .from('admin_reports')
@@ -592,28 +611,6 @@ export default function DashboardPage() {
       const convIds = convoRows.map((c: { id: string }) => c.id)
       const customerIds = [...new Set(convoRows.map((c: { customer_id: string }) => c.customer_id))]
 
-      const activeThreadId = selectedConvoIdRef.current
-      const inboxActive = activeTabRef.current === 'inbox'
-      if (inboxActive && activeThreadId && convIds.includes(activeThreadId)) {
-        const { data: activeConvo, error: activeErr } = await supabase
-          .from('conversations')
-          .select('customer_id')
-          .eq('id', activeThreadId)
-          .maybeSingle()
-        if (!activeErr && activeConvo?.customer_id) {
-          const { errorMessage: markErr } = await markCustomerMessagesReadForStaff(
-            supabase,
-            activeThreadId,
-            activeConvo.customer_id as string
-          )
-          if (markErr)
-            setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages(mark read): ${markErr}`)
-          const { errorMessage: nMarkErr } = await markConversationNotificationsRead(supabase, p.id, activeThreadId)
-          if (nMarkErr)
-            setLoadError((prev) => (prev ? `${prev} · ` : '') + `notifications(mark read): ${nMarkErr}`)
-        }
-      }
-
       const profileById: Record<string, { first_name: string; last_name: string; username: string; avatar_url?: string | null }> = {}
       if (customerIds.length > 0) {
         const { data: profs, error: pe } = await supabase
@@ -630,16 +627,37 @@ export default function DashboardPage() {
       const previewByConvo: Record<string, { body: string; created_at: string }> = {}
       const unreadByConvo: Record<string, number> = {}
       if (convIds.length > 0) {
-        const { data: msgs, error: me } = await supabase
-          .from('messages')
-          .select('conversation_id, body, created_at')
-          .in('conversation_id', convIds)
-          .order('created_at', { ascending: false })
-        if (me) setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages: ${me.message}`)
-        for (const m of msgs || []) {
-          const row = m as { conversation_id: string; body: string; created_at: string }
-          if (!previewByConvo[row.conversation_id]) {
-            previewByConvo[row.conversation_id] = { body: row.body, created_at: row.created_at }
+        const { data: previews, error: previewErr } = await supabase.rpc('inbox_latest_previews', {
+          p_conversation_ids: convIds,
+        })
+        if (previewErr) {
+          const msg = previewErr.message || ''
+          const missingRpc =
+            previewErr.code === 'PGRST202' ||
+            previewErr.code === '42883' ||
+            /does not exist|schema cache|Could not find the function/i.test(msg)
+          if (missingRpc) {
+            const { data: msgs, error: me } = await supabase
+              .from('messages')
+              .select('conversation_id, body, created_at')
+              .in('conversation_id', convIds)
+              .order('created_at', { ascending: false })
+              .limit(10000)
+            if (me) setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages: ${me.message}`)
+            for (const m of msgs || []) {
+              const row = m as { conversation_id: string; body: string; created_at: string }
+              const prev = previewByConvo[row.conversation_id]
+              if (!prev || new Date(row.created_at) > new Date(prev.created_at)) {
+                previewByConvo[row.conversation_id] = { body: row.body, created_at: row.created_at }
+              }
+            }
+          } else {
+            setLoadError((prev) => (prev ? `${prev} · ` : '') + `inbox_latest_previews: ${msg}`)
+          }
+        } else {
+          for (const row of previews || []) {
+            const r = row as { conversation_id: string; body: string; created_at: string }
+            previewByConvo[r.conversation_id] = { body: r.body, created_at: r.created_at }
           }
         }
 
@@ -1191,14 +1209,24 @@ export default function DashboardPage() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
         () => {
-          void openThread(cid)
+          void reloadThreadMessages(cid, { markRead: true })
         }
       )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
-        () => {
-          void openThread(cid)
+        (payload) => {
+          const row = payload.new as {
+            id?: string
+            read?: boolean
+            read_at?: string | null
+          }
+          if (!row?.id) return
+          setThreadMessages((prev) =>
+            prev.map((m) =>
+              m.id === row.id ? { ...m, read: row.read ?? m.read, read_at: row.read_at ?? m.read_at } : m
+            )
+          )
         }
       )
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
@@ -1322,6 +1350,45 @@ export default function DashboardPage() {
     }
   }, [supabase, profile?.id])
 
+  const openMessageFromNotifyRef = useRef<(conversationId: string) => void>(() => {})
+  openMessageFromNotifyRef.current = (conversationId: string) => {
+    setActiveTab('inbox')
+    void openThread(conversationId)
+  }
+
+  useDesktopMessageNotifications({
+    supabase,
+    userId: profile?.id,
+    types: ['support_message', 'staff_alert'],
+    onOpenMessage: (row) => {
+      if (row.conversation_id) openMessageFromNotifyRef.current(row.conversation_id)
+      else router.push(row.link || '/dashboard')
+    },
+    onOpenConversation: (conversationId) => openMessageFromNotifyRef.current(conversationId),
+    watchMessages: profile?.id
+      ? {
+          myUserId: profile.id,
+          popupTitle: 'New customer message',
+          isInboundMessage: () => false,
+          confirmInbound: async (msg) => {
+            const bid = profileRef.current?.business_id
+            if (!bid) return false
+            const { data } = await supabase
+              .from('conversations')
+              .select('business_id, customer_id')
+              .eq('id', msg.conversation_id)
+              .maybeSingle()
+            if (!data || data.business_id !== bid) return false
+            return msg.sender_id === data.customer_id
+          },
+          getSenderLabel: (msg) => {
+            const conv = convoListRef.current.find((c) => c.id === msg.conversation_id)
+            return conv?.customerName ?? null
+          },
+        }
+      : undefined,
+  })
+
   useEffect(() => {
     if (activeTab !== 'team' || profileRef.current?.business_role !== 'admin') return
     void loadTeam()
@@ -1364,6 +1431,158 @@ export default function DashboardPage() {
     }, 300)
     return () => window.clearTimeout(timer)
   }, [activeTab, audience, notifyRecipientQuery])
+
+  useEffect(() => {
+    if (usersPanelTab !== 'active') {
+      setActiveMemberLookup(null)
+      return
+    }
+    const q = activeMemberQuery.trim()
+    if (q.length < 2) {
+      setActiveMemberLookup(null)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setActiveMemberLookupBusy(true)
+        try {
+          const res = await fetch('/api/staff/search-customers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: q }),
+          })
+          const j = (await res.json().catch(() => ({}))) as {
+            customer?: {
+              id: string
+              username: string
+              first_name: string | null
+              last_name: string | null
+              account_status: string
+              email: string | null
+            }
+          }
+          setActiveMemberLookup(res.ok && j.customer ? j.customer : null)
+        } catch {
+          setActiveMemberLookup(null)
+        } finally {
+          setActiveMemberLookupBusy(false)
+        }
+      })()
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [usersPanelTab, activeMemberQuery])
+
+  /** Load older threads for inbox search that fall outside the recent-thread limit. */
+  useEffect(() => {
+    if (activeTab !== 'inbox') {
+      setInboxSearchExtraConvos([])
+      return
+    }
+    const q = inboxSearchQuery.trim().toLowerCase().replace(/^@+/, '')
+    const bid = profile?.business_id
+    if (q.length < 2 || !bid) {
+      setInboxSearchExtraConvos([])
+      return
+    }
+
+    const matchesMember = (m: {
+      first_name?: string | null
+      last_name?: string | null
+      username?: string | null
+    }) => {
+      const first = (m.first_name ?? '').toLowerCase()
+      const last = (m.last_name ?? '').toLowerCase()
+      const label = `${first} ${last}`.trim()
+      const username = (m.username ?? '').toLowerCase().replace(/^@+/, '')
+      return label.includes(q) || first.includes(q) || last.includes(q) || username.includes(q)
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setInboxSearchExtraBusy(true)
+        try {
+          const loadedConvoIds = new Set(convoList.map((c) => c.id))
+          const customerIdsToTry = new Set<string>()
+
+          for (const m of activeMembers) {
+            if (matchesMember(m)) customerIdsToTry.add(m.id)
+          }
+          for (const m of suspendedMembers) {
+            if (matchesMember(m)) customerIdsToTry.add(m.id)
+          }
+
+          try {
+            const res = await fetch('/api/staff/search-customers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier: inboxSearchQuery.trim() }),
+            })
+            const j = (await res.json().catch(() => ({}))) as { customer?: { id: string } }
+            if (res.ok && j.customer?.id) customerIdsToTry.add(j.customer.id)
+          } catch {
+            /* optional */
+          }
+
+          const extras: ConvoListItem[] = []
+          for (const customerId of customerIdsToTry) {
+            const { data: convo, error: convoErr } = await supabase
+              .from('conversations')
+              .select('id, customer_id, updated_at')
+              .eq('business_id', bid)
+              .eq('customer_id', customerId)
+              .maybeSingle()
+            if (convoErr || !convo?.id || loadedConvoIds.has(convo.id as string)) continue
+
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('id, first_name, last_name, username, avatar_url')
+              .eq('id', customerId)
+              .maybeSingle()
+
+            const { data: lastMsg } = await supabase
+              .from('messages')
+              .select('body, created_at')
+              .eq('conversation_id', convo.id as string)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+
+            const pr = prof as {
+              first_name?: string | null
+              last_name?: string | null
+              username?: string | null
+              avatar_url?: string | null
+            } | null
+            const name = pr
+              ? `${pr.first_name ?? ''} ${pr.last_name ?? ''}`.trim() || (pr.username ?? 'Customer')
+              : 'Customer'
+            const msg = lastMsg as { body?: string; created_at?: string } | null
+
+            extras.push({
+              id: convo.id as string,
+              customer_id: customerId,
+              customerName: name,
+              customerUsername: pr?.username ?? '…',
+              customerAvatar: pr?.avatar_url ?? null,
+              preview: (msg?.body ?? '').trim() || 'No messages yet',
+              updated_at: (convo.updated_at as string) || msg?.created_at || new Date().toISOString(),
+              unreadCount: 0,
+              labels: [],
+            })
+            loadedConvoIds.add(convo.id as string)
+          }
+
+          setInboxSearchExtraConvos(extras)
+        } catch {
+          setInboxSearchExtraConvos([])
+        } finally {
+          setInboxSearchExtraBusy(false)
+        }
+      })()
+    }, 350)
+
+    return () => window.clearTimeout(timer)
+  }, [activeTab, inboxSearchQuery, profile?.business_id, convoList, activeMembers, suspendedMembers, supabase])
 
   async function manualRefresh() {
     const p = profileRef.current
@@ -1714,13 +1933,33 @@ export default function DashboardPage() {
     }
   }
 
-  async function openThread(conversationId: string) {
-    setInboxLabelsPopoverOpen(false)
-    setCannedPopoverOpen(false)
-    setSelectedConvoId(conversationId)
-    setThreadLoading(true)
-    setReplyDraft('')
-    clearReplyPendingImage()
+  async function markActiveThreadRead(conversationId: string, customerId: string) {
+    const p = profileRef.current
+    const { errorMessage: readErr } = await markCustomerMessagesReadForStaff(
+      supabase,
+      conversationId,
+      customerId
+    )
+    if (readErr) console.error(readErr)
+    setConvoList((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
+    if (p?.id) {
+      const { errorMessage: nErr } = await markConversationNotificationsRead(supabase, p.id, conversationId)
+      if (nErr) console.error(nErr)
+      const { count } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', p.id)
+        .eq('read', false)
+      setStaffNotifyUnread(count ?? 0)
+    }
+  }
+
+  async function reloadThreadMessages(
+    conversationId: string,
+    options?: { markRead?: boolean; showLoading?: boolean }
+  ) {
+    const showLoading = options?.showLoading ?? false
+    if (showLoading) setThreadLoading(true)
     try {
       const { data: convoMeta, error: convoErr } = await supabase
         .from('conversations')
@@ -1730,22 +1969,6 @@ export default function DashboardPage() {
       if (convoErr) throw convoErr
       const customerId = convoMeta?.customer_id as string | undefined
 
-      if (customerId) {
-        const { errorMessage: readErr } = await markCustomerMessagesReadForStaff(supabase, conversationId, customerId)
-        if (readErr) console.error(readErr)
-        setConvoList((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
-      }
-      if (profile?.id) {
-        const { errorMessage: nErr } = await markConversationNotificationsRead(supabase, profile.id, conversationId)
-        if (nErr) console.error(nErr)
-        const { count } = await supabase
-          .from('notifications')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', profile.id)
-          .eq('read', false)
-        setStaffNotifyUnread(count ?? 0)
-      }
-
       const { data, error } = await supabase
         .from('messages')
         .select(THREAD_MESSAGE_SELECT)
@@ -1753,12 +1976,26 @@ export default function DashboardPage() {
         .order('created_at', { ascending: true })
       if (error) throw error
       setThreadMessages((data || []) as ThreadMessage[])
+
+      if (options?.markRead && customerId) {
+        await markActiveThreadRead(conversationId, customerId)
+      }
     } catch (e) {
       console.error(e)
       setThreadMessages([])
     } finally {
-      setThreadLoading(false)
+      if (showLoading) setThreadLoading(false)
     }
+  }
+
+  async function openThread(conversationId: string) {
+    setInboxLabelsPopoverOpen(false)
+    setCannedPopoverOpen(false)
+    setSelectedConvoId(conversationId)
+    setThreadLoading(true)
+    setReplyDraft('')
+    clearReplyPendingImage()
+    await reloadThreadMessages(conversationId, { markRead: true, showLoading: true })
   }
 
   async function onReplyImagePick(e: ChangeEvent<HTMLInputElement>) {
@@ -1903,6 +2140,31 @@ export default function DashboardPage() {
     }
   }
 
+  async function openInboxThreadForMember(customerId: string) {
+    setMemberStartBusyId(customerId)
+    try {
+      let conversationId = convoIdByCustomerId.get(customerId)
+      if (!conversationId) {
+        const res = await fetch('/api/staff/ensure-conversation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerId }),
+        })
+        const j = (await res.json()) as { conversationId?: string; error?: string }
+        if (!res.ok) throw new Error(j.error || 'Could not start conversation')
+        conversationId = j.conversationId
+      }
+      if (!conversationId) throw new Error('Could not start conversation')
+      setInboxSearchQuery('')
+      await refreshDashboard(profileRef.current!)
+      await openThread(conversationId)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not open conversation')
+    } finally {
+      setMemberStartBusyId(null)
+    }
+  }
+
   async function sendMessageToActiveMember(customerId: string) {
     const draft = (memberMessageDrafts[customerId] ?? '').trim()
     if (!draft) return
@@ -1946,7 +2208,7 @@ export default function DashboardPage() {
     try {
       await refreshDashboard(p)
       const cid = selectedConvoIdRef.current
-      if (cid) await openThread(cid)
+      if (cid) await reloadThreadMessages(cid, { markRead: false })
     } finally {
       setInboxRefreshing(false)
     }
@@ -2354,19 +2616,53 @@ export default function DashboardPage() {
     [convoList]
   )
 
+  const convoListMerged = useMemo(() => {
+    const byId = new Map<string, ConvoListItem>()
+    for (const c of convoList) byId.set(c.id, c)
+    for (const c of inboxSearchExtraConvos) {
+      if (!byId.has(c.id)) byId.set(c.id, c)
+    }
+    return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  }, [convoList, inboxSearchExtraConvos])
+
+  const inboxShowsRecentCap = convoList.length >= INBOX_THREAD_LIMIT
+
+  /** Merge active-member profile data when inbox thread rows lack names (RLS gaps). */
+  const convoListForInbox = useMemo(() => {
+    const memberById = new Map<string, ActiveMember>()
+    for (const m of activeMembers) memberById.set(m.id, m)
+    for (const m of suspendedMembers) memberById.set(m.id, m)
+
+    return convoListMerged.map((c) => {
+      const m = memberById.get(c.customer_id)
+      if (!m) return c
+      const enrichedName = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
+      const needsEnrich =
+        c.customerName === 'Customer' || c.customerUsername === '…' || !c.customerName.trim()
+      if (!needsEnrich) return c
+      return {
+        ...c,
+        customerName: enrichedName || c.customerName,
+        customerUsername: m.username || c.customerUsername,
+        customerAvatar: c.customerAvatar ?? m.avatar_url ?? null,
+      }
+    })
+  }, [convoListMerged, activeMembers, suspendedMembers])
+
   const filteredConvoList = useMemo(() => {
-    const q = inboxSearchQuery.trim().toLowerCase()
-    if (!q) return convoList
-    return convoList.filter((c) => {
+    const q = inboxSearchQuery.trim().toLowerCase().replace(/^@+/, '')
+    if (!q) return convoListForInbox
+    return convoListForInbox.filter((c) => {
       const labelsText = c.labels.map((l) => l.name).join(' ').toLowerCase()
+      const username = c.customerUsername.toLowerCase().replace(/^@+/, '')
       return (
         c.customerName.toLowerCase().includes(q) ||
-        c.customerUsername.toLowerCase().includes(q) ||
+        username.includes(q) ||
         c.preview.toLowerCase().includes(q) ||
         labelsText.includes(q)
       )
     })
-  }, [convoList, inboxSearchQuery])
+  }, [convoListForInbox, inboxSearchQuery])
 
   const inboxDisplayList = useMemo(() => {
     if (inboxThreadLabelFilterIds.length === 0) return filteredConvoList
@@ -2374,6 +2670,54 @@ export default function DashboardPage() {
       inboxThreadLabelFilterIds.some((lid) => c.labels.some((l) => l.id === lid))
     )
   }, [filteredConvoList, inboxThreadLabelFilterIds])
+
+  /** Active members matching inbox search who have no thread in results (often: follow only, no messages yet). */
+  const inboxSearchMemberMatches = useMemo(() => {
+    const q = inboxSearchQuery.trim().toLowerCase().replace(/^@+/, '')
+    if (q.length < 2) return []
+
+    const matchesMember = (m: {
+      id: string
+      first_name?: string | null
+      last_name?: string | null
+      username?: string | null
+    }) => {
+      const first = (m.first_name ?? '').toLowerCase()
+      const last = (m.last_name ?? '').toLowerCase()
+      const label = `${first} ${last}`.trim()
+      const username = (m.username ?? '').toLowerCase().replace(/^@+/, '')
+      return label.includes(q) || first.includes(q) || last.includes(q) || username.includes(q)
+    }
+
+    const seen = new Set<string>()
+    const out: ActiveMember[] = []
+    const threadIdsInResults = new Set(inboxDisplayList.map((c) => c.customer_id))
+
+    for (const m of activeMembers) {
+      if (!matchesMember(m) || seen.has(m.id)) continue
+      if (threadIdsInResults.has(m.id)) continue
+      seen.add(m.id)
+      out.push(m)
+    }
+
+    if (
+      activeMemberLookup &&
+      matchesMember(activeMemberLookup) &&
+      !seen.has(activeMemberLookup.id) &&
+      !threadIdsInResults.has(activeMemberLookup.id)
+    ) {
+      out.push({
+        id: activeMemberLookup.id,
+        username: activeMemberLookup.username,
+        first_name: activeMemberLookup.first_name,
+        last_name: activeMemberLookup.last_name,
+        account_status: activeMemberLookup.account_status,
+        avatar_url: null,
+      })
+    }
+
+    return out.sort((a, b) => (a.username || '').localeCompare(b.username || ''))
+  }, [inboxSearchQuery, activeMembers, activeMemberLookup, inboxDisplayList])
 
   const filteredCannedPickerList = useMemo(() => {
     const q = cannedPickerQuery.trim().toLowerCase()
@@ -2497,7 +2841,7 @@ export default function DashboardPage() {
   const isAdmin = profile.business_role === 'admin'
   const mobileGridClass =
     navItems.length > 6 ? 'grid-cols-7' : navItems.length > 5 ? 'grid-cols-6' : 'grid-cols-5'
-  const selectedConvo = convoList.find((c) => c.id === selectedConvoId) || null
+  const selectedConvo = convoListForInbox.find((c) => c.id === selectedConvoId) || null
   const activeNav = navItems.find((n) => n.id === activeTab)
   const headerTitle = activeNav?.label ?? 'Dashboard'
   const staffRoleLabel = profile.business_role === 'admin' ? 'Admin' : 'Support Staff'
@@ -3065,6 +3409,7 @@ export default function DashboardPage() {
 
         {activeTab === 'inbox' ? (
           <section className="space-y-3">
+            <DesktopNotificationPrompt variant="staff" />
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2 min-h-[34px]">
                 {inboxUnreadTotal > 0 ? (
@@ -3074,8 +3419,11 @@ export default function DashboardPage() {
                 ) : null}
                 <span className="text-[11px] text-[#8892b0] tabular-nums">
                   {inboxSearchQuery.trim() || inboxThreadLabelFilterIds.length > 0
-                    ? `${inboxDisplayList.length} of ${convoList.length} threads`
-                    : `${convoList.length} threads`}
+                    ? `${inboxDisplayList.length} of ${convoListMerged.length} threads`
+                    : `${convoListMerged.length} threads`}
+                  {inboxShowsRecentCap && !inboxSearchQuery.trim()
+                    ? ` · ${INBOX_THREAD_LIMIT} most recent`
+                    : ''}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -3131,7 +3479,7 @@ export default function DashboardPage() {
                       <input
                         type="search"
                         className="w-full rounded-xl bg-transparent py-2 pl-8 pr-2 text-[13px] text-[#e2e6f5] placeholder:text-[#5c647e] outline-none focus:ring-1 focus:ring-[#6f54ff]/40"
-                        placeholder="Name, @user, preview, label…"
+                        placeholder="Name, @user, preview, label… (finds older threads too)"
                         value={inboxSearchQuery}
                         onChange={(e) => setInboxSearchQuery(e.target.value)}
                         aria-label="Search threads"
@@ -3169,12 +3517,56 @@ export default function DashboardPage() {
                     ) : null}
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.08] max-h-[44vh] lg:max-h-none">
-                    {inboxDisplayList.length === 0 ? (
-                      <p className="px-3 py-6 text-center text-[13px] text-[#7d86a8]">
-                        {convoList.length === 0
-                          ? 'No threads.'
-                          : 'No threads match your search or label filters.'}
+                    {inboxShowsRecentCap && !inboxSearchQuery.trim() ? (
+                      <p className="px-3 py-2 text-[11px] text-[#8892b0] border-b border-white/[0.06]">
+                        Showing the {INBOX_THREAD_LIMIT} most recently active threads. Chats do not expire — search by
+                        name to find older conversations (e.g. Bayern).
                       </p>
+                    ) : null}
+                    {inboxSearchExtraBusy && inboxSearchQuery.trim().length >= 2 ? (
+                      <p className="px-3 py-2 text-[11px] text-[#8892b0]">Searching older threads…</p>
+                    ) : null}
+                    {inboxDisplayList.length === 0 ? (
+                      <div className="px-3 py-4 space-y-3">
+                        <p className="text-center text-[13px] text-[#7d86a8]">
+                          {convoListMerged.length === 0
+                            ? 'No threads.'
+                            : inboxShowsRecentCap && inboxSearchQuery.trim()
+                              ? 'No match in recent threads — check below for older threads or members.'
+                              : 'No threads match your search or label filters.'}
+                        </p>
+                        {inboxSearchMemberMatches.length > 0 ? (
+                          <div className="rounded-xl border border-[#6f54ff]/30 bg-[#6f54ff]/8 p-2 space-y-1">
+                            <p className="text-[10px] uppercase tracking-wide text-[#9ea8cc] px-1">
+                              Matching members (no message thread yet)
+                            </p>
+                            {inboxSearchMemberMatches.map((m) => {
+                              const label =
+                                `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username
+                              const starting = memberStartBusyId === m.id
+                              return (
+                                <div
+                                  key={m.id}
+                                  className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[0.04]"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-[13px] font-semibold text-white truncate">{label}</p>
+                                    <p className="text-[11px] text-[#8892b0] truncate">@{m.username}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={starting}
+                                    onClick={() => void openInboxThreadForMember(m.id)}
+                                    className="shrink-0 rounded-lg border border-[#6f54ff]/40 bg-[#6f54ff]/15 px-2.5 py-1 text-[12px] font-semibold text-[#c4b8ff] hover:bg-[#6f54ff]/25 disabled:opacity-40"
+                                  >
+                                    {starting ? 'Opening…' : 'Open chat'}
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : (
                     inboxDisplayList.map((item) => {
                       const active = selectedConvoId === item.id
@@ -3452,9 +3844,19 @@ export default function DashboardPage() {
                                     }`}
                                   >
                                     {m.image_url ? (
-                                      <img src={m.image_url} alt="" className="rounded-lg max-h-40 mb-1 max-w-full w-full object-cover" />
+                                      <ChatMessageImage
+                                        imageUrl={m.image_url}
+                                        alt="Attachment"
+                                        className="rounded-lg max-h-40 mb-1 max-w-full w-full object-cover"
+                                      />
                                     ) : null}
-                                    {showText ? <p className="whitespace-pre-wrap break-words">{m.body}</p> : null}
+                                    {showText ? (
+                                      <LinkifiedText
+                                        text={m.body}
+                                        className="whitespace-pre-wrap break-words"
+                                        linkClassName={isFromTeam ? 'text-white' : 'text-[#9eb4ff]'}
+                                      />
+                                    ) : null}
                                     <p className={`text-[10px] mt-1 ${isFromTeam ? 'text-white/70' : 'text-[#7d86a8]'}`}>
                                       {timeAgo(m.created_at)}
                                     </p>
@@ -3851,7 +4253,7 @@ export default function DashboardPage() {
                         <input
                           type="search"
                           className="w-full rounded-xl border border-white/10 bg-[#0d1428] py-2 pl-8 pr-2 text-sm text-[#e2e6f5] outline-none focus:border-[#6f54ff]/50"
-                          placeholder="Search by name or @username…"
+                          placeholder="Search by name, @username, or email…"
                           value={activeMemberQuery}
                           onChange={(e) => setActiveMemberQuery(e.target.value)}
                           aria-label="Search active members"
@@ -3867,12 +4269,37 @@ export default function DashboardPage() {
                     </div>
                   ) : null}
                   <div className="rounded-2xl border border-white/10 bg-[#0d1428]/90 divide-y divide-white/10 shadow-[0_20px_50px_-35px_rgba(30,49,112,0.95)] max-h-[380px] overflow-y-auto">
+                    {activeMemberQuery.trim().length >= 2 &&
+                    activeMemberLookup &&
+                    !activeMembers.some((m) => m.id === activeMemberLookup.id) ? (
+                      <div className="px-3 py-2.5 border-b border-[#6f54ff]/25 bg-[#6f54ff]/8">
+                        <p className="text-[10px] uppercase tracking-wide text-[#9ea8cc] mb-1">Found on platform</p>
+                        <p className="font-medium text-[14px]">
+                          {[activeMemberLookup.first_name, activeMemberLookup.last_name].filter(Boolean).join(' ').trim() ||
+                            activeMemberLookup.username}
+                        </p>
+                        <p className="text-[13px] text-[#7d86a8]">
+                          @{activeMemberLookup.username}
+                          {activeMemberLookup.email ? ` · ${activeMemberLookup.email}` : ''}
+                        </p>
+                        <p className="text-[11px] text-[#7d86a8] mt-1">
+                          Status: {activeMemberLookup.account_status}. They must follow your business or message you to appear in Active members.
+                        </p>
+                      </div>
+                    ) : null}
+                    {activeMemberLookupBusy && activeMemberQuery.trim().length >= 2 ? (
+                      <p className="text-xs text-[#7d86a8] px-3 py-2">Looking up account…</p>
+                    ) : null}
                     {activeMembers.length === 0 ? (
                       <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">
                         No active members linked to this business yet — approve customers and have them follow or message you.
                       </p>
                     ) : filteredActiveMembers.length === 0 ? (
-                      <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">No members match your search.</p>
+                      <p className="text-sm text-[#7d86a8] py-6 px-4 text-center">
+                        {activeMemberLookup
+                          ? 'No linked members match — see the account found above if shown.'
+                          : 'No members match your search.'}
+                      </p>
                     ) : (
                       filteredActiveMembers.map((m) => {
                         const label = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.username

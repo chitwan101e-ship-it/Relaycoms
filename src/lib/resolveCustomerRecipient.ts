@@ -14,8 +14,7 @@ function normalizeUsername(raw: string): string {
 }
 
 function looksLikeEmail(raw: string): boolean {
-  const s = raw.trim().toLowerCase()
-  return s.includes('@') && s.includes('.')
+  return raw.trim().includes('@')
 }
 
 async function authEmailForUser(admin: SupabaseClient, userId: string): Promise<string | null> {
@@ -80,15 +79,36 @@ export async function resolveCustomerRecipient(
   const username = normalizeUsername(raw)
   if (!username) return null
 
-  const { data: prof, error } = await admin
+  const baseSelect =
+    'id, username, first_name, last_name, role, account_status, deleted_at' as const
+
+  const { data: exactProf, error: exactErr } = await admin
     .from('profiles')
-    .select('id, username, first_name, last_name, role, account_status, deleted_at')
+    .select(baseSelect)
     .ilike('username', username)
     .eq('role', 'customer')
     .is('deleted_at', null)
     .maybeSingle()
 
-  if (error || !prof) return null
+  let prof = exactErr ? null : exactProf
+
+  if (!prof) {
+    const { data: partialRows, error: partialErr } = await admin
+      .from('profiles')
+      .select(baseSelect)
+      .ilike('username', `%${username}%`)
+      .eq('role', 'customer')
+      .is('deleted_at', null)
+      .order('username')
+      .limit(10)
+    if (!partialErr && partialRows?.length) {
+      prof =
+        partialRows.find((r) => normalizeUsername((r.username as string) ?? '') === username) ??
+        (partialRows.length === 1 ? partialRows[0] : null)
+    }
+  }
+
+  if (!prof) return null
 
   const id = prof.id as string
   const email = await authEmailForUser(admin, id)
@@ -190,5 +210,15 @@ export async function searchCustomersForNotify(
     }
   }
 
-  return withEmail.sort((a, b) => a.username.localeCompare(b.username))
+  const merged = new Map<string, ResolvedCustomerRecipient>()
+  for (const p of withEmail) merged.set(p.id, p)
+
+  if (q.length >= 2) {
+    const global = await resolveCustomerRecipient(admin, query)
+    if (global && global.account_status === 'approved') {
+      merged.set(global.id, global)
+    }
+  }
+
+  return [...merged.values()].sort((a, b) => a.username.localeCompare(b.username)).slice(0, 50)
 }

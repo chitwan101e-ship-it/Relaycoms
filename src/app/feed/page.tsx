@@ -33,6 +33,8 @@ import {
   CheckCheck,
 } from 'lucide-react'
 import { ContentModerationMenu } from '@/components/ContentModerationMenu'
+import { ChatMessageImage } from '@/components/ChatMessageImage'
+import { LinkifiedText } from '@/components/LinkifiedText'
 
 type ProfileRow = {
   id: string
@@ -219,7 +221,6 @@ export default function FeedPage() {
   const [peerTeamTyping, setPeerTeamTyping] = useState(false)
   /** Increments when the customer-chat Realtime channel is subscribed so typing emit retries. */
   const [supportTypingChannelReady, setSupportTypingChannelReady] = useState(0)
-
   const showToast = useCallback((msg: string) => {
     setToast(msg)
     window.setTimeout(() => setToast(null), 4200)
@@ -1960,31 +1961,24 @@ export default function FeedPage() {
                           style={mine ? { background: relayChatGradient, color: 'white' } : undefined}
                         >
                           {m.image_url ? (
-                            <a
-                              href={m.image_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block"
-                            >
-                              <img
-                                src={m.image_url}
-                                alt="Attachment"
-                                className={clsx(
-                                  'max-w-full max-h-52 w-full object-cover block',
-                                  showText ? 'rounded-t-2xl' : 'rounded-2xl'
-                                )}
-                              />
-                            </a>
+                            <ChatMessageImage
+                              imageUrl={m.image_url}
+                              alt="Attachment"
+                              className={clsx(
+                                'max-w-full max-h-52 w-full object-cover block',
+                                showText ? 'rounded-t-2xl' : 'rounded-2xl'
+                              )}
+                            />
                           ) : null}
                           {showText ? (
-                            <p
+                            <LinkifiedText
+                              text={m.body}
                               className={clsx(
                                 'whitespace-pre-wrap break-words px-3 py-2.5',
                                 mine ? 'text-white' : 'text-[#e3e8f8]'
                               )}
-                            >
-                              {m.body}
-                            </p>
+                              linkClassName={mine ? 'text-white' : 'text-[#b8c8ff]'}
+                            />
                           ) : null}
                         </div>
                         <div
