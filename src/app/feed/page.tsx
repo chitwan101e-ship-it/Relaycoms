@@ -1583,12 +1583,13 @@ export default function FeedPage() {
                         </button>
                       </div>
                       {isReplying ? (
-                        <div className="mt-2 flex gap-2 items-center">
-                          <input
+                        <div className="mt-2 flex gap-2 items-end">
+                          <textarea
+                            rows={1}
                             value={replyThreadDraft}
                             onChange={(e) => setReplyThreadDraft(e.target.value)}
                             placeholder={`Reply to ${who}…`}
-                            className={`flex-1 min-w-0 rounded-xl border px-3 py-2 text-sm outline-none ${isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-[#0f1a38]'} ${commentInputText}`}
+                            className={`flex-1 min-w-0 rounded-xl border px-3 py-2 text-sm outline-none resize-none min-h-[40px] max-h-28 ${isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-[#0f1a38]'} ${commentInputText}`}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && !e.shiftKey) {
                                 e.preventDefault()
@@ -1652,7 +1653,7 @@ export default function FeedPage() {
                       </div>
                     </div>
                     <div className={`mt-3 text-[15px] ${isLight ? 'text-slate-800' : 'text-white'}`}>
-                      <p className={`mb-1.5 ${headingText}`}>{a.title}</p>
+                      <p className={`mb-1.5 whitespace-pre-wrap ${headingText}`}>{a.title}</p>
                       <p className={`whitespace-pre-wrap text-[15px] ${isLight ? 'text-slate-700 leading-7' : 'leading-snug'}`}>{a.body}</p>
                     </div>
                   </div>
@@ -1732,14 +1733,15 @@ export default function FeedPage() {
                           {(byParent.get(null) || []).map((c) => renderCommentNode(c, 0))}
                         </ul>
                       )}
-                      <div className={`flex gap-2 items-center rounded-full px-3 py-1.5 border ${isLight ? 'bg-white border-slate-200' : 'bg-[#0f1a38] border-white/10'}`}>
-                        <input
+                      <div className={`flex gap-2 items-end rounded-2xl px-3 py-1.5 border ${isLight ? 'bg-white border-slate-200' : 'bg-[#0f1a38] border-white/10'}`}>
+                        <textarea
+                          rows={1}
                           value={commentDraft[a.id] || ''}
                           onChange={(e) =>
                             setCommentDraft((d) => ({ ...d, [a.id]: e.target.value }))
                           }
                           placeholder="Write a comment…"
-                          className={`flex-1 min-w-0 bg-transparent text-sm py-2 focus:outline-none ${commentInputText}`}
+                          className={`flex-1 min-w-0 bg-transparent text-sm py-2 focus:outline-none resize-none min-h-[40px] max-h-28 ${commentInputText}`}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) {
                               e.preventDefault()
@@ -2058,12 +2060,13 @@ export default function FeedPage() {
                   >
                     <ImagePlus className="w-6 h-6" strokeWidth={1.75} />
                   </button>
-                  <div className="flex-1 min-w-0 flex items-center gap-2 bg-[#0b132c] rounded-full px-3 py-1 border border-white/10/80">
-                    <input
+                  <div className="flex-1 min-w-0 flex items-end gap-2 bg-[#0b132c] rounded-2xl px-3 py-1.5 border border-white/10/80">
+                    <textarea
+                      rows={1}
                       value={supportDraft}
                       onChange={(e) => setSupportDraft(e.target.value)}
                       placeholder="Aa"
-                      className="flex-1 min-w-0 bg-transparent py-2.5 text-[15px] focus:outline-none placeholder:text-[#7f8bad]"
+                      className="flex-1 min-w-0 bg-transparent py-2 text-[15px] focus:outline-none placeholder:text-[#7f8bad] resize-none min-h-[40px] max-h-28 leading-snug"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault()

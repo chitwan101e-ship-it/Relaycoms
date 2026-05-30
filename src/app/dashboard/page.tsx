@@ -3088,15 +3088,17 @@ export default function DashboardPage() {
                 <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#8d63ff] to-[#5a7ff6] flex items-center justify-center">
                   <User2 className="w-5 h-5 text-white" />
                 </div>
-                <input
-                  className="flex-1 bg-[#111a31] border border-white/10 rounded-full px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] text-[#dce3f9] placeholder:text-[#8b97bf]"
+                <textarea
+                  rows={2}
+                  className="flex-1 bg-[#111a31] border border-white/10 rounded-2xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] text-[#dce3f9] placeholder:text-[#8b97bf] resize-none min-h-[52px] max-h-32"
                   placeholder="What's on your mind?"
                   value={postBody}
                   onChange={(e) => setPostBody(e.target.value)}
                 />
               </div>
               <textarea
-                className="w-full bg-[#111a31] border border-white/10 rounded-2xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] min-h-20"
+                rows={3}
+                className="w-full bg-[#111a31] border border-white/10 rounded-2xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] min-h-20 max-h-40 resize-y"
                 placeholder="Add more details (optional)"
                 value={postTitle}
                 onChange={(e) => setPostTitle(e.target.value)}
@@ -3215,7 +3217,7 @@ export default function DashboardPage() {
                             </div>
                           ) : (
                             <>
-                              <p className="font-semibold text-white">{a.title}</p>
+                              <p className="font-semibold text-white whitespace-pre-wrap">{a.title}</p>
                               <p className="text-sm text-[#c4cbe6] mt-1 whitespace-pre-wrap line-clamp-6">{a.body}</p>
                             </>
                           )}
@@ -3354,8 +3356,9 @@ export default function DashboardPage() {
                                             <p className="text-[11px] text-[#7d86a8] mt-1">{timeAgo(c.created_at)}</p>
                                           </div>
                                           <div className="flex flex-wrap items-center gap-2">
-                                            <input
-                                              className="flex-1 min-w-[140px] rounded-xl border border-white/10 bg-[#111a31] px-2.5 py-2 text-xs text-white outline-none focus:border-[#6f54ff]"
+                                            <textarea
+                                              rows={1}
+                                              className="flex-1 min-w-[140px] rounded-xl border border-white/10 bg-[#111a31] px-2.5 py-2 text-xs text-white outline-none focus:border-[#6f54ff] resize-none min-h-[36px] max-h-24"
                                               placeholder={`Reply to ${c.userName}…`}
                                               value={staffCommentReplyDrafts[dk] || ''}
                                               onChange={(e) =>
@@ -4050,8 +4053,9 @@ export default function DashboardPage() {
                               </div>
                             ) : null}
                           </div>
-                          <input
-                            className="flex-1 min-w-0 bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff]"
+                          <textarea
+                            rows={1}
+                            className="flex-1 min-w-0 bg-[#111a31] border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#6f54ff] resize-none min-h-[42px] max-h-32"
                             placeholder="Reply or add a caption…"
                             value={replyDraft}
                             onChange={(e) => setReplyDraft(e.target.value)}
