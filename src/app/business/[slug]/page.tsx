@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import RelayLogo from '@/components/RelayLogo'
+import { FeedPostImage } from '@/components/FeedPostImage'
 import { ArrowLeft, Building2, Loader2, UserPlus, UserMinus } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -256,12 +257,9 @@ export default function PublicBusinessPage() {
                   <p className="font-semibold text-white text-lg">{a.title}</p>
                   <p className="text-[#d4dbf0] mt-2 whitespace-pre-wrap leading-relaxed">{a.body}</p>
                   {a.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={a.image_url}
-                      alt=""
-                      className="mt-3 w-full max-h-80 object-cover rounded-xl border border-white/10"
-                    />
+                    <div className="mt-3">
+                      <FeedPostImage imageUrl={a.image_url} alt="" rounded="xl" />
+                    </div>
                   ) : null}
                 </li>
               ))}

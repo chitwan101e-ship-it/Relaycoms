@@ -42,6 +42,7 @@ import {
 import { sharePostLink } from '@/lib/sharePostLink'
 import { ContentModerationMenu } from '@/components/ContentModerationMenu'
 import { ChatMessageImage } from '@/components/ChatMessageImage'
+import { FeedPostImage } from '@/components/FeedPostImage'
 import { LinkifiedText } from '@/components/LinkifiedText'
 import { DesktopNotificationPrompt } from '@/components/DesktopNotificationPrompt'
 import { useDesktopMessageNotifications } from '@/hooks/useDesktopMessageNotifications'
@@ -343,6 +344,11 @@ export default function DashboardPage() {
   const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null)
   const selectedConvoIdRef = useRef<string | null>(null)
   selectedConvoIdRef.current = selectedConvoId
+
+  /** Only mark customer messages read while the admin is on Inbox viewing this thread. */
+  function isActivelyViewingInboxThread(conversationId: string) {
+    return activeTabRef.current === 'inbox' && selectedConvoIdRef.current === conversationId
+  }
   const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([])
   const [threadLoading, setThreadLoading] = useState(false)
   const [replyDraft, setReplyDraft] = useState('')
@@ -1267,7 +1273,7 @@ export default function DashboardPage() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cid}` },
         () => {
-          void reloadThreadMessages(cid, { markRead: true })
+          void reloadThreadMessages(cid, { markRead: isActivelyViewingInboxThread(cid) })
         }
       )
       .on(
@@ -2080,6 +2086,25 @@ export default function DashboardPage() {
     clearReplyPendingImage()
     await reloadThreadMessages(conversationId, { markRead: true, showLoading: true })
   }
+
+  /** Mark unread customer messages when the admin returns to Inbox with a thread still open. */
+  useEffect(() => {
+    if (activeTab !== 'inbox' || !selectedConvoId) return
+    const cid = selectedConvoId
+    void (async () => {
+      const { data: convoMeta, error: convoErr } = await supabase
+        .from('conversations')
+        .select('customer_id')
+        .eq('id', cid)
+        .maybeSingle()
+      if (convoErr) {
+        console.error(convoErr)
+        return
+      }
+      const customerId = convoMeta?.customer_id as string | undefined
+      if (customerId) await markActiveThreadRead(cid, customerId)
+    })()
+  }, [activeTab, selectedConvoId, supabase])
 
   async function onReplyImagePick(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -3240,8 +3265,8 @@ export default function DashboardPage() {
                 <p className="text-[11px] text-[#7d86a8] px-1">Optional — shows below the main line if you add text here.</p>
               </div>
               {postImage ? (
-                <div className="relative rounded-xl overflow-hidden border border-white/10 max-h-56">
-                  <img src={postImage.previewUrl} alt="" className="w-full h-full object-cover max-h-56" />
+                <div className="relative flex items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/20 max-h-56">
+                  <img src={postImage.previewUrl} alt="" className="mx-auto block h-auto w-auto max-w-full max-h-56 object-contain" />
                   <button
                     type="button"
                     onClick={clearPostImage}
@@ -3366,11 +3391,7 @@ export default function DashboardPage() {
                         </div>
                         {a.image_url ? (
                           <div className="px-4 pb-3">
-                            <img
-                              src={a.image_url}
-                              alt=""
-                              className="w-full max-h-52 object-cover rounded-xl border border-white/10"
-                            />
+                            <FeedPostImage imageUrl={a.image_url} alt="" rounded="xl" />
                           </div>
                         ) : null}
                         <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-t border-white/10 text-sm">

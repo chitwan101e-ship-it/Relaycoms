@@ -36,6 +36,7 @@ import {
 import { ContentModerationMenu } from '@/components/ContentModerationMenu'
 import { sharePostLink } from '@/lib/sharePostLink'
 import { ChatMessageImage } from '@/components/ChatMessageImage'
+import { FeedPostImage } from '@/components/FeedPostImage'
 import { LinkifiedText } from '@/components/LinkifiedText'
 import { ExpandablePostText } from '@/components/ExpandablePostText'
 
@@ -1829,12 +1830,7 @@ export default function FeedPage() {
 
                   {a.image_url ? (
                     <div className="mt-3 px-1">
-                      <ChatMessageImage
-                        imageUrl={a.image_url}
-                        alt=""
-                        linkClassName="block w-full cursor-pointer"
-                        className="w-full max-h-[480px] object-cover rounded-2xl border border-white/10 bg-black/20"
-                      />
+                      <FeedPostImage imageUrl={a.image_url} alt="" />
                     </div>
                   ) : null}
 
