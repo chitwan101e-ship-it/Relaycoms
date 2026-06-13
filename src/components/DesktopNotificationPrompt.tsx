@@ -21,6 +21,8 @@ type Props = {
 export function DesktopNotificationPrompt({ variant, isLight = false }: Props) {
   const [permission, setPermission] = useState<DesktopNotifyPermission>('default')
   const [busy, setBusy] = useState(false)
+  const [testStatus, setTestStatus] = useState<'idle' | 'ok' | 'fail'>('idle')
+  const [testMessage, setTestMessage] = useState<string | null>(null)
 
   const sync = useCallback(() => {
     setPermission(getDesktopNotifyPermission())
@@ -29,6 +31,23 @@ export function DesktopNotificationPrompt({ variant, isLight = false }: Props) {
   useEffect(() => {
     sync()
   }, [sync])
+
+  function onSendTestAlert() {
+    setTestStatus('idle')
+    setTestMessage(null)
+    const result = sendTestDesktopNotification()
+    if (result.ok) {
+      setTestStatus('ok')
+      setTestMessage('Test sent — check the bottom-right corner of Windows (or Action Center).')
+      window.setTimeout(() => {
+        setTestStatus('idle')
+        setTestMessage(null)
+      }, 8000)
+      return
+    }
+    setTestStatus('fail')
+    setTestMessage(result.reason ?? 'Could not show test alert.')
+  }
 
   if (!desktopNotifySupported()) return null
   if (isDesktopNotifyEnabled()) {
@@ -39,13 +58,29 @@ export function DesktopNotificationPrompt({ variant, isLight = false }: Props) {
         </p>
         <button
           type="button"
-          onClick={() => sendTestDesktopNotification()}
+          onClick={onSendTestAlert}
           className={`text-[10px] font-semibold underline underline-offset-2 ${
             isLight ? 'text-slate-600 hover:text-slate-900' : 'text-[#8d63ff] hover:text-[#a78bff]'
           }`}
         >
           Send test alert
         </button>
+        {testMessage ? (
+          <p
+            className={`text-[10px] leading-snug ${
+              testStatus === 'ok'
+                ? isLight
+                  ? 'text-emerald-700'
+                  : 'text-emerald-300/90'
+                : isLight
+                  ? 'text-red-700'
+                  : 'text-red-300/90'
+            }`}
+            role="status"
+          >
+            {testMessage}
+          </p>
+        ) : null}
       </div>
     )
   }

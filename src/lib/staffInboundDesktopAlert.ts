@@ -51,7 +51,7 @@ export function showStaffInboundDesktopPopup(opts: {
     tag: opts.tag ?? `relay-msg-${opts.conversationId}`,
     onClick: opts.onOpen,
   })
-  if (shown) markStaffInboundPopupShown(opts.conversationId, preview)
+  if (shown.ok) markStaffInboundPopupShown(opts.conversationId, preview)
 }
 
 export function showStaffNotificationRowDesktopPopup(opts: {
@@ -81,7 +81,7 @@ export function showStaffNotificationRowDesktopPopup(opts: {
     tag: opts.notificationId ? `relay-notify-${opts.notificationId}` : `relay-notify-${opts.type}`,
     onClick: opts.onOpen,
   })
-  if (shown && opts.type === 'support_message') {
+  if (shown.ok && opts.type === 'support_message') {
     markStaffInboundPopupShown(opts.conversationId ?? null, body)
   }
 }

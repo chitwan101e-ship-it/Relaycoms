@@ -7,6 +7,7 @@ import { getClientIp } from '@/lib/clientIp'
 import { rateLimitRegister } from '@/lib/authRateLimit'
 import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
 import { SIGNUP_OTP_VERIFICATION_FAILED } from '@/lib/signupOtp'
+import { isAuthEmailTakenError, resolveSignupEmailConflict } from '@/lib/authEmailTaken'
 import crypto from 'crypto'
 
 function hashToken(token: string) {
@@ -161,18 +162,28 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 4. Create Supabase auth user (self-serve customers only) ───────────────
-    const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: otpEnabled,
-    })
+    const createAuthUser = () =>
+      supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: otpEnabled,
+      })
 
-    if (authErr || !authData.user) {
-      if (authErr?.message?.includes('already registered')) {
-        await logAttempt(true, 'email_taken')
-        return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
+    let { data: authData, error: authErr } = await createAuthUser()
+
+    if (authErr || !authData?.user) {
+      if (isAuthEmailTakenError(authErr ?? null)) {
+        const conflict = await resolveSignupEmailConflict(supabase, String(email))
+        if (conflict.action === 'reclaimed') {
+          ;({ data: authData, error: authErr } = await createAuthUser())
+        } else {
+          await logAttempt(true, conflict.blockReason)
+          return NextResponse.json({ error: conflict.error }, { status: 400 })
+        }
       }
-      throw authErr
+      if (authErr || !authData?.user) {
+        throw authErr ?? new Error('Failed to create auth user')
+      }
     }
 
     const userId = authData.user.id

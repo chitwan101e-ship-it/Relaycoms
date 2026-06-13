@@ -54,8 +54,45 @@ export async function requestDesktopNotifyPermission(): Promise<DesktopNotifyPer
   return result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'default'
 }
 
-function desktopNotificationIcon(): string {
-  return `${window.location.origin}/icons/chat-bubble.png`
+export type DesktopNotifyResult = {
+  ok: boolean
+  reason?: string
+}
+
+function desktopNotificationIcon(): string | undefined {
+  try {
+    return `${window.location.origin}/icons/chat-bubble.png`
+  } catch {
+    return undefined
+  }
+}
+
+function createDesktopNotification(
+  opts: {
+    title: string
+    body: string
+    tag?: string
+    onClick?: () => void
+  },
+  withIcon: boolean
+): Notification | null {
+  const options: NotificationOptions = {
+    body: opts.body,
+    tag: opts.tag,
+    silent: false,
+  }
+  if (withIcon) {
+    const icon = desktopNotificationIcon()
+    if (icon) options.icon = icon
+  }
+
+  const n = new Notification(opts.title, options)
+  n.onclick = () => {
+    window.focus()
+    n.close()
+    opts.onClick?.()
+  }
+  return n
 }
 
 export function showDesktopNotification(opts: {
@@ -63,33 +100,44 @@ export function showDesktopNotification(opts: {
   body: string
   tag?: string
   onClick?: () => void
-}): boolean {
-  if (!desktopNotifySupported() || Notification.permission !== 'granted') return false
+}): DesktopNotifyResult {
+  if (!desktopNotifySupported()) {
+    return { ok: false, reason: 'This browser does not support desktop notifications.' }
+  }
+  if (Notification.permission === 'denied') {
+    return {
+      ok: false,
+      reason: 'Notifications are blocked. In Edge: Settings → Cookies and site permissions → Notifications → allow this site.',
+    }
+  }
+  if (Notification.permission !== 'granted') {
+    return { ok: false, reason: 'Click Enable message alerts first, then Allow in the browser prompt.' }
+  }
 
   try {
-    const n = new Notification(opts.title, {
-      body: opts.body,
-      icon: desktopNotificationIcon(),
-      tag: opts.tag,
-    })
-
-    n.onclick = () => {
-      window.focus()
-      n.close()
-      opts.onClick?.()
-    }
-    return true
+    createDesktopNotification(opts, true)
+    return { ok: true }
   } catch (err) {
-    console.error('[desktop-notify] show failed:', err)
-    return false
+    try {
+      createDesktopNotification(opts, false)
+      return { ok: true }
+    } catch (retryErr) {
+      const msg = retryErr instanceof Error ? retryErr.message : err instanceof Error ? err.message : 'Unknown error'
+      console.error('[desktop-notify] show failed:', err, retryErr)
+      return {
+        ok: false,
+        reason: `Could not show alert (${msg}). Check Windows Settings → System → Notifications and ensure Edge is allowed.`,
+      }
+    }
   }
 }
 
-export function sendTestDesktopNotification(): boolean {
+export function sendTestDesktopNotification(): DesktopNotifyResult {
   return showDesktopNotification({
     title: 'Relay test alert',
     body: 'Desktop notifications are working. You will see a popup like this for new customer messages.',
-    tag: 'relay-test-alert',
+    // Unique tag each click — Edge/Chrome hide repeat toasts when the tag is reused.
+    tag: `relay-test-alert-${Date.now()}`,
   })
 }
 
