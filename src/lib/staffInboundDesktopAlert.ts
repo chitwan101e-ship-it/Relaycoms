@@ -18,9 +18,18 @@ export function shouldShowStaffInboundPopup(conversationId: string | null, body:
   const now = Date.now()
   const prev = recentInboundPopups.get(key)
   if (prev != null && now - prev < 5000) return false
-  recentInboundPopups.set(key, now)
-  window.setTimeout(() => recentInboundPopups.delete(key), 5000)
   return true
+}
+
+function markStaffInboundPopupShown(conversationId: string | null, body: string): void {
+  const key = inboundPopupKey(conversationId, body)
+  recentInboundPopups.set(key, Date.now())
+  window.setTimeout(() => recentInboundPopups.delete(key), 5000)
+}
+
+function shouldSuppressInboundPopupForActiveView(isActivelyViewingThread: (conversationId: string) => boolean, conversationId: string): boolean {
+  if (typeof document === 'undefined') return isActivelyViewingThread(conversationId)
+  return !document.hidden && isActivelyViewingThread(conversationId)
 }
 
 export function showStaffInboundDesktopPopup(opts: {
@@ -36,12 +45,13 @@ export function showStaffInboundDesktopPopup(opts: {
   const preview = messagePreview(opts.body, opts.hasImage)
   if (!shouldShowStaffInboundPopup(opts.conversationId, preview)) return
 
-  showDesktopNotification({
+  const shown = showDesktopNotification({
     title: customerMessagePopupTitle(opts.senderLabel, opts.fallbackTitle ?? 'New message'),
     body: preview,
     tag: opts.tag ?? `relay-msg-${opts.conversationId}`,
     onClick: opts.onOpen,
   })
+  if (shown) markStaffInboundPopupShown(opts.conversationId, preview)
 }
 
 export function showStaffNotificationRowDesktopPopup(opts: {
@@ -55,21 +65,25 @@ export function showStaffNotificationRowDesktopPopup(opts: {
 }): void {
   if (!isDesktopNotifyEnabled()) return
 
-  if (opts.type === 'support_message') {
-    if (!shouldShowStaffInboundPopup(opts.conversationId ?? null, opts.body)) return
-  }
-
   const title =
     opts.type === 'support_message'
       ? customerMessagePopupTitle(opts.senderLabel, opts.title)
       : opts.title
 
-  showDesktopNotification({
+  const body = opts.body
+  if (opts.type === 'support_message') {
+    if (!shouldShowStaffInboundPopup(opts.conversationId ?? null, body)) return
+  }
+
+  const shown = showDesktopNotification({
     title,
-    body: opts.body,
+    body,
     tag: opts.notificationId ? `relay-notify-${opts.notificationId}` : `relay-notify-${opts.type}`,
     onClick: opts.onOpen,
   })
+  if (shown && opts.type === 'support_message') {
+    markStaffInboundPopupShown(opts.conversationId ?? null, body)
+  }
 }
 
 type ConvoListHint = {
@@ -96,32 +110,41 @@ export async function tryShowStaffInboundMessageDesktopPopup(
 ): Promise<void> {
   if (!isDesktopNotifyEnabled()) return
   if (msg.sender_id === ctx.staffUserId) return
-  if (ctx.isActivelyViewingThread(msg.conversation_id)) return
+  if (shouldSuppressInboundPopupForActiveView(ctx.isActivelyViewingThread, msg.conversation_id)) return
 
   let senderLabel: string | null = null
   const cached = ctx.getConvoFromList(msg.conversation_id)
   if (cached) {
     if (msg.sender_id !== cached.customer_id) return
     senderLabel = cached.customerName.trim().split(/\s+/)[0] || cached.customerName.trim()
-  } else {
-    const { data } = await supabase
+    showStaffInboundDesktopPopup({
+      conversationId: msg.conversation_id,
+      body: msg.body ?? '',
+      hasImage: Boolean(msg.image_url),
+      senderLabel,
+      tag: msg.id ? `relay-msg-${msg.id}` : undefined,
+      onOpen: () => ctx.onOpenConversation?.(msg.conversation_id),
+    })
+    return
+  }
+
+  const { data } = await supabase
       .from('conversations')
       .select('business_id, customer_id')
-      .eq('id', msg.conversation_id)
-      .maybeSingle()
-    if (!data || data.business_id !== ctx.businessId) return
-    if (msg.sender_id !== data.customer_id) return
+    .eq('id', msg.conversation_id)
+    .maybeSingle()
+  if (!data || data.business_id !== ctx.businessId) return
+  if (msg.sender_id !== data.customer_id) return
 
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('first_name, username')
-      .eq('id', data.customer_id)
-      .maybeSingle()
-    senderLabel =
-      (prof?.first_name as string | null | undefined)?.trim() ||
-      (prof?.username as string | null | undefined)?.trim() ||
-      null
-  }
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('first_name, username')
+    .eq('id', data.customer_id)
+    .maybeSingle()
+  senderLabel =
+    (prof?.first_name as string | null | undefined)?.trim() ||
+    (prof?.username as string | null | undefined)?.trim() ||
+    null
 
   showStaffInboundDesktopPopup({
     conversationId: msg.conversation_id,

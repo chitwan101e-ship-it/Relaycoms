@@ -9,6 +9,7 @@ import {
   isDesktopNotifyPromptDismissed,
   requestDesktopNotifyPermission,
   dismissDesktopNotifyPrompt,
+  sendTestDesktopNotification,
   type DesktopNotifyPermission,
 } from '@/lib/desktopNotifications'
 
@@ -32,9 +33,20 @@ export function DesktopNotificationPrompt({ variant, isLight = false }: Props) {
   if (!desktopNotifySupported()) return null
   if (isDesktopNotifyEnabled()) {
     return (
-      <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-[#5c647e]'}`}>
-        Desktop alerts are on — corner popups for new messages and signup requests.
-      </p>
+      <div className={`space-y-1.5 ${isLight ? '' : ''}`}>
+        <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-[#5c647e]'}`}>
+          Desktop alerts are on — corner popups for new customer messages and signup requests.
+        </p>
+        <button
+          type="button"
+          onClick={() => sendTestDesktopNotification()}
+          className={`text-[10px] font-semibold underline underline-offset-2 ${
+            isLight ? 'text-slate-600 hover:text-slate-900' : 'text-[#8d63ff] hover:text-[#a78bff]'
+          }`}
+        >
+          Send test alert
+        </button>
+      </div>
     )
   }
   if (isDesktopNotifyPromptDismissed()) return null

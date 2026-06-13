@@ -48,10 +48,14 @@ export async function requestDesktopNotifyPermission(): Promise<DesktopNotifyPer
     setDesktopNotifyEnabled(true)
     showDesktopNotification({
       title: 'Relay alerts on',
-      body: 'You will get a corner popup for each new message and signup request.',
+      body: 'You will get a corner popup for each new customer message and signup request.',
     })
   }
   return result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'default'
+}
+
+function desktopNotificationIcon(): string {
+  return `${window.location.origin}/icons/chat-bubble.png`
 }
 
 export function showDesktopNotification(opts: {
@@ -59,14 +63,13 @@ export function showDesktopNotification(opts: {
   body: string
   tag?: string
   onClick?: () => void
-}): void {
-  if (!desktopNotifySupported() || Notification.permission !== 'granted') return
+}): boolean {
+  if (!desktopNotifySupported() || Notification.permission !== 'granted') return false
 
   try {
-    const icon = `${window.location.origin}/favicon.svg`
     const n = new Notification(opts.title, {
       body: opts.body,
-      icon,
+      icon: desktopNotificationIcon(),
       tag: opts.tag,
     })
 
@@ -75,9 +78,19 @@ export function showDesktopNotification(opts: {
       n.close()
       opts.onClick?.()
     }
+    return true
   } catch (err) {
     console.error('[desktop-notify] show failed:', err)
+    return false
   }
+}
+
+export function sendTestDesktopNotification(): boolean {
+  return showDesktopNotification({
+    title: 'Relay test alert',
+    body: 'Desktop notifications are working. You will see a popup like this for new customer messages.',
+    tag: 'relay-test-alert',
+  })
 }
 
 export function messagePreview(body: string, hasImage?: boolean): string {

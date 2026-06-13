@@ -11,6 +11,28 @@ export async function notifyBusinessStaffOfCustomerMessage(
 ): Promise<{ errorMessage: string | null }> {
   const preview = opts.preview.trim().slice(0, 160) || '📷 Message'
 
+  const { data: convo, error: convoErr } = await admin
+    .from('conversations')
+    .select('customer_id')
+    .eq('id', opts.conversationId)
+    .maybeSingle()
+
+  if (convoErr) return { errorMessage: convoErr.message }
+
+  let popupTitle = 'New customer message'
+  if (convo?.customer_id) {
+    const { data: customer } = await admin
+      .from('profiles')
+      .select('first_name, username')
+      .eq('id', convo.customer_id)
+      .maybeSingle()
+    const label =
+      (customer?.first_name as string | null | undefined)?.trim() ||
+      (customer?.username as string | null | undefined)?.trim() ||
+      'Customer'
+    popupTitle = `${label} message`
+  }
+
   const { data: staff, error: staffErr } = await admin
     .from('profiles')
     .select('id')
@@ -26,7 +48,7 @@ export async function notifyBusinessStaffOfCustomerMessage(
       user_id: row.id as string,
       business_id: opts.businessId,
       type: 'support_message',
-      title: 'New customer message',
+      title: popupTitle,
       body: preview,
       link: '/dashboard',
       conversation_id: opts.conversationId,

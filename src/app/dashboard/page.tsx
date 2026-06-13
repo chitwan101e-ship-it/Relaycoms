@@ -63,7 +63,6 @@ import {
 import { FeedPostImage } from '@/components/FeedPostImage'
 import { LinkifiedText } from '@/components/LinkifiedText'
 import { DesktopNotificationPrompt } from '@/components/DesktopNotificationPrompt'
-import { useDesktopMessageNotifications } from '@/hooks/useDesktopMessageNotifications'
 import {
   showStaffNotificationRowDesktopPopup,
   tryShowStaffInboundMessageDesktopPopup,
@@ -1412,6 +1411,7 @@ export default function DashboardPage() {
             type?: string
             title?: string
             body?: string
+            link?: string | null
             conversation_id?: string | null
             read?: boolean
           }
@@ -1435,6 +1435,7 @@ export default function DashboardPage() {
             notificationId: row.id,
             onOpen: () => {
               if (row.conversation_id) openMessageFromNotifyRef.current(row.conversation_id)
+              else if (row.link) router.push(row.link)
             },
           })
         }
@@ -1614,40 +1615,6 @@ export default function DashboardPage() {
       void supabase.removeChannel(channel)
     }
   }, [supabase, profile?.id])
-
-  useDesktopMessageNotifications({
-    supabase,
-    userId: profile?.id,
-    types: ['support_message', 'staff_alert'],
-    onOpenMessage: (row) => {
-      if (row.conversation_id) openMessageFromNotifyRef.current(row.conversation_id)
-      else router.push(row.link || '/dashboard')
-    },
-    onOpenConversation: (conversationId) => openMessageFromNotifyRef.current(conversationId),
-    getCustomerLabelForConversation: (conversationId) => {
-      if (!conversationId) return null
-      const cached = inboundCustomerFirstNameRef.current.get(conversationId)
-      if (cached) return cached
-      const conv = convoListRef.current.find((c) => c.id === conversationId)
-      if (!conv?.customerName?.trim()) return null
-      return conv.customerName.trim().split(/\s+/)[0] || conv.customerName.trim()
-    },
-    watchMessages:
-      profile?.id && profile.business_id
-        ? {
-            myUserId: profile.id,
-            businessId: profile.business_id,
-            popupTitle: 'New message',
-            isActivelyViewingThread: isActivelyViewingInboxThread,
-            getConvoFromList: (id) => {
-              const c = convoListRef.current.find((row) => row.id === id)
-              if (!c) return undefined
-              return { customer_id: c.customer_id, customerName: c.customerName }
-            },
-            getSenderLabel: (msg) => inboundCustomerFirstNameRef.current.get(msg.conversation_id) ?? null,
-          }
-        : undefined,
-  })
 
   useEffect(() => {
     if (activeTab !== 'team' || profileRef.current?.business_role !== 'admin') return
