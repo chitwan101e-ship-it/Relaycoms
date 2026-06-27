@@ -2245,6 +2245,16 @@ export default function DashboardPage() {
     await reloadThreadMessages(conversationId, { markRead: false, showLoading: true })
   }
 
+  function closeInboxThread() {
+    setInboxLabelsPopoverOpen(false)
+    setInboxContactOpen(false)
+    setCannedPopoverOpen(false)
+    setSelectedConvoId(null)
+    setReplyTarget(null)
+    clearReplyPendingImage()
+    setThreadMessages([])
+  }
+
   openMessageFromNotifyRef.current = (conversationId: string) => {
     setActiveTab('inbox')
     void openThread(conversationId)
@@ -2643,7 +2653,6 @@ export default function DashboardPage() {
         .is('deleted_at', null)
 
       let notificationsOk = true
-      let emailResult: { sent: number; skipped: number; failed: number; recipientCount?: number } | null = null
       if (custErr) {
         console.error(custErr)
         notificationsOk = false
@@ -2667,19 +2676,6 @@ export default function DashboardPage() {
             break
           }
         }
-
-        const emailTitle = `New post: ${title}`
-        emailResult = await sendBulkNotificationEmails({
-          labelPresetKeys: ['active_player', 'account_created'],
-          subject: emailTitle,
-          title: emailTitle,
-          body: preview,
-          linkPath: `/feed?post=${announcementId}`,
-          ctaLabel: 'View post',
-        })
-        if (emailResult && emailResult.failed > 0) {
-          console.warn('[publishAnnouncement] some notification emails failed', emailResult)
-        }
       }
 
       setPostTitle('')
@@ -2692,23 +2688,8 @@ export default function DashboardPage() {
           'Announcement published on the feed. In-app notifications could not all be sent — check the console or Supabase notifications policies.'
         )
       } else if (notified > 0) {
-        const emailSent = emailResult?.sent ?? 0
-        const emailSkipped = emailResult?.skipped ?? 0
-        const emailFailed = emailResult?.failed ?? 0
-        const emailTargets = emailResult?.recipientCount ?? 0
-        let emailLine = ''
-        if (emailResult === null) {
-          emailLine = ' Email could not be sent — check server logs.'
-        } else if (emailTargets === 0) {
-          emailLine = ' No customers with Active player or Account created labels to email.'
-        } else {
-          emailLine = ` ${emailSent} email(s) sent to Active player / Account created labels`
-          if (emailSkipped) emailLine += ` (${emailSkipped} skipped — no address)`
-          if (emailFailed) emailLine += ` (${emailFailed} failed)`
-          emailLine += '.'
-        }
         alert(
-          `Announcement posted. ${notified} approved customer(s) got an in-app notification.${emailLine}`
+          `Announcement posted. ${notified} approved customer(s) got an in-app notification. Use Notify to send emails manually.`
         )
       } else {
         alert('Announcement posted. No approved customers to notify yet.')
@@ -3214,6 +3195,7 @@ export default function DashboardPage() {
   const mobileGridClass =
     navItems.length > 6 ? 'grid-cols-7' : navItems.length > 5 ? 'grid-cols-6' : 'grid-cols-5'
   const selectedConvo = convoListForInbox.find((c) => c.id === selectedConvoId) || null
+  const inboxMobileThreadOpen = Boolean(selectedConvoId)
   const activeNav = navItems.find((n) => n.id === activeTab)
   const headerTitle = activeNav?.label ?? 'Dashboard'
   const staffRoleLabel = profile.business_role === 'admin' ? 'Admin' : 'Support Staff'
@@ -3312,8 +3294,20 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      <main className="flex flex-col min-h-0 w-full min-h-screen lg:min-h-0 lg:h-full overflow-hidden pb-[max(4.25rem,env(safe-area-inset-bottom))] lg:pb-0">
-        <header className="shrink-0 flex flex-wrap items-center gap-2.5 border-b border-white/[0.08] bg-[rgba(11,18,40,0.9)] backdrop-blur-md px-3 py-2.5 sm:px-4">
+      <main
+        className={`flex flex-col min-h-0 w-full min-h-screen lg:min-h-0 lg:h-full overflow-hidden lg:pb-0 ${
+          activeTab === 'inbox' ? 'max-lg:h-dvh max-lg:max-h-dvh' : ''
+        } ${
+          activeTab === 'inbox' && inboxMobileThreadOpen
+            ? 'max-lg:pb-0'
+            : 'pb-[max(4.25rem,env(safe-area-inset-bottom))]'
+        }`}
+      >
+        <header
+          className={`shrink-0 flex flex-wrap items-center gap-2.5 border-b border-white/[0.08] bg-[rgba(11,18,40,0.9)] backdrop-blur-md px-3 py-2.5 sm:px-4 ${
+            activeTab === 'inbox' && inboxMobileThreadOpen ? 'max-lg:hidden' : ''
+          }`}
+        >
           <div className="flex-1 min-w-0">
             <h2 className="text-[17px] font-bold tracking-[-0.02em] text-white leading-tight">{headerTitle}</h2>
             <p className="text-[12px] text-[#8892b0] mt-0.5 leading-snug">{headerSub}</p>
@@ -3362,13 +3356,17 @@ export default function DashboardPage() {
 
         <div
           className={`flex-1 min-h-0 ${
-            activeTab === 'inbox' ? 'lg:overflow-hidden lg:flex lg:flex-col' : 'overflow-y-auto'
+            activeTab === 'inbox'
+              ? 'max-lg:overflow-hidden max-lg:flex max-lg:flex-col lg:overflow-hidden lg:flex lg:flex-col'
+              : 'overflow-y-auto'
           }`}
         >
           <div
             className={`mx-auto w-full max-w-7xl px-3 py-3 sm:px-4 sm:py-4 space-y-3 ${
-              activeTab === 'inbox' ? 'lg:flex-1 lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden' : ''
-            }`}
+              activeTab === 'inbox'
+                ? 'max-lg:flex-1 max-lg:min-h-0 max-lg:flex max-lg:flex-col max-lg:overflow-hidden lg:flex-1 lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden'
+                : ''
+            } ${activeTab === 'inbox' && inboxMobileThreadOpen ? 'max-lg:px-0 max-lg:py-0 max-lg:space-y-0' : ''}`}
           >
           {loadError ? (
             <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-[13px] text-red-200">
@@ -3932,8 +3930,12 @@ export default function DashboardPage() {
         ) : null}
 
         {activeTab === 'inbox' ? (
-          <section className="space-y-3 lg:flex-1 lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden">
-            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+          <section className="space-y-3 max-lg:flex max-lg:flex-col max-lg:flex-1 max-lg:min-h-0 max-lg:overflow-hidden lg:flex-1 lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden">
+            <div
+              className={`flex items-center justify-between gap-2 flex-wrap shrink-0 ${
+                inboxMobileThreadOpen ? 'max-lg:hidden' : ''
+              }`}
+            >
               <div className="flex items-center gap-2 min-h-[34px]">
                 {inboxUnreadTotal > 0 ? (
                   <span className="text-[10px] font-bold text-[#8d63ff] bg-[rgba(141,99,255,0.2)] border border-[rgba(141,99,255,0.35)] rounded-md px-1.5 py-px tabular-nums">
@@ -3954,10 +3956,11 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => void refreshInbox()}
                   disabled={inboxRefreshing || !profile.business_id}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] disabled:opacity-40 max-sm:px-2.5"
+                  aria-label="Refresh inbox"
                 >
                   <RefreshCw className={`w-4 h-4 ${inboxRefreshing ? 'animate-spin' : ''}`} />
-                  Refresh inbox
+                  <span className="max-sm:sr-only">Refresh inbox</span>
                 </button>
               </div>
             </div>
@@ -3994,8 +3997,16 @@ export default function DashboardPage() {
                 </div>
               )
             ) : (
-              <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden lg:grid lg:grid-cols-[minmax(220px,1fr)_minmax(0,1.75fr)] lg:grid-rows-[minmax(0,1fr)] lg:flex-1 lg:min-h-0">
-                <aside className="border-r border-white/[0.08] flex flex-col min-h-0 max-h-[44vh] lg:max-h-none lg:h-full">
+              <div
+                className={`rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden max-lg:flex max-lg:flex-col max-lg:flex-1 max-lg:min-h-0 lg:grid lg:grid-cols-[minmax(220px,1fr)_minmax(0,1.75fr)] lg:grid-rows-[minmax(0,1fr)] lg:flex-1 lg:min-h-0 ${
+                  inboxMobileThreadOpen ? 'max-lg:rounded-none max-lg:border-0 max-lg:bg-transparent' : ''
+                }`}
+              >
+                <aside
+                  className={`border-r border-white/[0.08] min-h-0 lg:flex lg:flex-col lg:max-h-none lg:h-full ${
+                    inboxMobileThreadOpen ? 'hidden' : 'flex flex-col flex-1 min-h-0'
+                  }`}
+                >
                   <div className="p-2.5 border-b border-white/[0.08] shrink-0">
                     <div className="relative rounded-xl border border-white/[0.08] bg-[#0f1834]">
                       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5c647e]" aria-hidden />
@@ -4008,12 +4019,13 @@ export default function DashboardPage() {
                         aria-label="Search threads"
                       />
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5 items-center">
-                      <span className="text-[10px] text-[#5c647e] w-full">Filter</span>
+                    <div className="mt-2 space-y-1">
+                      <span className="text-[10px] text-[#5c647e]">Filter</span>
+                      <div className="flex flex-wrap gap-1.5 items-center">
                       <button
                         type="button"
                         onClick={clearInboxThreadFilters}
-                        className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                        className={`inline-flex shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
                           inboxThreadLabelFilterIds.length === 0 && !inboxUnreadFilterOnly
                             ? 'border-[#8d63ff]/50 bg-[rgba(141,99,255,0.15)] text-[#c4b8ff] ring-1 ring-[#8d63ff]/50'
                             : 'border-white/[0.12] bg-white/[0.04] text-[#9ea8cc] opacity-90 hover:opacity-100 hover:text-white'
@@ -4024,7 +4036,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={toggleInboxUnreadFilter}
-                        className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                        className={`inline-flex shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
                           inboxUnreadFilterOnly ? 'ring-1 ring-[#ff3b5c]/50' : 'opacity-90 hover:opacity-100'
                         }`}
                         style={inboxLabelChipStyle(INBOX_UNREAD_VIRTUAL_LABEL.color)}
@@ -4038,7 +4050,7 @@ export default function DashboardPage() {
                             key={lbl.id}
                             type="button"
                             onClick={() => selectInboxThreadLabelFilter(lbl.id)}
-                            className={`inline-flex max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                            className={`inline-flex shrink-0 max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
                               on ? 'ring-1 ring-[#8d63ff]/50' : 'opacity-80 hover:opacity-100'
                             }`}
                             style={inboxLabelChipStyle(lbl.color)}
@@ -4047,9 +4059,10 @@ export default function DashboardPage() {
                           </button>
                         )
                       })}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.08] max-h-[44vh] lg:max-h-none pt-1 pb-0.5">
+                  <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.08] lg:max-h-none pt-1 pb-0.5">
                     {inboxShowsRecentCap && !inboxSearchQuery.trim() && inboxThreadLabelFilterIds.length === 0 && !inboxUnreadFilterOnly ? (
                       <p className="px-3 py-2 text-[11px] text-[#8892b0] border-b border-white/[0.06]">
                         Showing the {INBOX_THREAD_LIMIT} most recently active threads. Chats do not expire — search by
@@ -4200,12 +4213,26 @@ export default function DashboardPage() {
                   </div>
                 </aside>
 
-                <div className="flex flex-col relative min-h-[260px] max-h-[48vh] lg:min-h-0 lg:max-h-none lg:h-full lg:overflow-hidden">
+                <div
+                  className={
+                    inboxMobileThreadOpen
+                      ? 'flex flex-col flex-1 min-h-0 relative max-lg:overflow-hidden lg:min-h-0 lg:max-h-none lg:h-full lg:overflow-hidden'
+                      : 'hidden lg:flex lg:flex-col lg:min-h-0 lg:max-h-none lg:h-full lg:overflow-hidden relative'
+                  }
+                >
                   {selectedConvo ? (
                     <>
                       <div className="px-3 py-2.5 border-b border-white/[0.08] shrink-0 space-y-2">
                         <div className="flex items-center gap-2 justify-between">
                           <div className="flex items-center gap-2.5 min-w-0">
+                            <button
+                              type="button"
+                              onClick={closeInboxThread}
+                              className="lg:hidden shrink-0 p-2 -ml-1 rounded-lg text-[#9ea8cc] hover:text-white hover:bg-white/10"
+                              aria-label="Back to all threads"
+                            >
+                              <ArrowLeft className="w-5 h-5" />
+                            </button>
                             <div className="w-8 h-8 rounded-full bg-[#d12f2f] overflow-hidden flex items-center justify-center text-[11px] font-bold text-white shrink-0">
                               {selectedConvo.customerAvatar ? (
                                 <img src={selectedConvo.customerAvatar} alt={`${selectedConvo.customerName} avatar`} className="w-full h-full object-cover" />
@@ -4771,8 +4798,8 @@ export default function DashboardPage() {
                       </div>
                     </>
                   ) : (
-                    <div className="h-full flex items-center justify-center px-5 text-center text-[#7d86a8] text-sm">
-                      Select a conversation from the left to open thread details.
+                    <div className="hidden lg:flex h-full items-center justify-center px-5 text-center text-[#7d86a8] text-sm">
+                      Select a conversation from the list to open thread details.
                     </div>
                   )}
                 </div>
@@ -5516,7 +5543,9 @@ export default function DashboardPage() {
       </main>
 
       <nav
-        className={`relay-footer-bar fixed bottom-0 left-0 right-0 lg:hidden border-t border-white/[0.08] bg-[rgba(9,14,32,0.97)] backdrop-blur-md px-1 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] grid ${mobileGridClass}`}
+        className={`relay-footer-bar fixed bottom-0 left-0 right-0 lg:hidden border-t border-white/[0.08] bg-[rgba(9,14,32,0.97)] backdrop-blur-md px-1 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] grid ${mobileGridClass} ${
+          activeTab === 'inbox' && inboxMobileThreadOpen ? 'max-lg:hidden' : ''
+        }`}
       >
         {navItems.map((item) => {
           const Icon = item.icon
