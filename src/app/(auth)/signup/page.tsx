@@ -65,7 +65,7 @@ export default function SignUpPage() {
   const otpEnabled = process.env.NEXT_PUBLIC_ENABLE_OTP === 'true'
 
   useEffect(() => {
-    if (step === 4) return
+    if (step !== 1) return
     let cancelled = false
     void (async () => {
       if (cancelled) return

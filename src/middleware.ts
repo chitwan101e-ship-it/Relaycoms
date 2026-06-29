@@ -72,6 +72,21 @@ export async function middleware(req: NextRequest) {
 }
 
 // Refresh Supabase session cookie on every request (must await; failures must not 500 the app).
+function hasLikelySupabaseSessionCookie(req: NextRequest): boolean {
+  return req.cookies.getAll().some((c) => c.name.includes('-auth-token') || c.name.startsWith('sb-'))
+}
+
+/** Public auth endpoints that never need a session refresh in middleware. */
+function isPublicAuthApiPath(pathname: string): boolean {
+  return (
+    pathname === '/api/auth/register' ||
+    pathname === '/api/auth/send-otp' ||
+    pathname === '/api/auth/verify-otp' ||
+    pathname === '/api/auth/staff-sign-in' ||
+    pathname.startsWith('/api/auth/password-reset')
+  )
+}
+
 async function withSupabaseSession(req: NextRequest, res: NextResponse) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -79,11 +94,30 @@ async function withSupabaseSession(req: NextRequest, res: NextResponse) {
   // Allow local UI rendering before environment variables are configured.
   if (!supabaseUrl || !supabaseAnonKey) return res
 
+  const { pathname } = req.nextUrl
+
   // Next.js prefetches RSC payloads in the background (fetchServerResponse). Awaiting Supabase
   // session refresh on those requests competes with real traffic and often surfaces as dev overlay
   // errors when Supabase is slow or the dev server is busy. Real navigations still run this block.
   const prefetch = req.headers.get('next-router-prefetch') === '1'
   if (prefetch) {
+    return res
+  }
+
+  // Signup/login traffic without cookies does not need auth refresh — skip to reduce Supabase load.
+  if (!hasLikelySupabaseSessionCookie(req)) {
+    if (
+      pathname === '/login' ||
+      pathname === '/signup' ||
+      pathname.startsWith('/signup/') ||
+      isPublicAuthApiPath(pathname)
+    ) {
+      return res
+    }
+  }
+
+  // Unauthenticated POSTs to public auth APIs never benefit from cookie refresh.
+  if (req.method === 'POST' && isPublicAuthApiPath(pathname)) {
     return res
   }
 

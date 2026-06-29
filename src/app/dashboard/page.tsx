@@ -392,6 +392,7 @@ export default function DashboardPage() {
   const [replyTarget, setReplyTarget] = useState<ReplyTargetMessage | null>(null)
 
   const [pendingCustomers, setPendingCustomers] = useState<PendingCustomer[]>([])
+  const [pendingSignupCount, setPendingSignupCount] = useState(0)
   const [reviewBusyId, setReviewBusyId] = useState<string | null>(null)
 
   const [reports, setReports] = useState<ReportItem[]>([])
@@ -570,7 +571,7 @@ export default function DashboardPage() {
   }, [supabase])
 
   const refreshDashboard = useCallback(
-    async (p: ProfileRow) => {
+    async (p: ProfileRow, opts?: { pendingDetail?: boolean }) => {
       setLoadError(null)
       if (!p.business_id) {
         setLoadError('Staff profile is missing business_id. Fix it in Supabase public.profiles for your admin user.')
@@ -579,6 +580,7 @@ export default function DashboardPage() {
         setInboxLabelCatalog([])
         setCannedReplies([])
         setPendingCustomers([])
+        setPendingSignupCount(0)
         setActiveMembers([])
         setSuspendedMembers([])
         setReports([])
@@ -586,18 +588,24 @@ export default function DashboardPage() {
       }
 
       const bid = p.business_id
+      const wantPendingDetail = opts?.pendingDetail ?? activeTabRef.current === 'users'
 
       const { data: bizRow } = await supabase.from('businesses').select('name, slug').eq('id', bid).maybeSingle()
       setBusinessInfo(bizRow ? { name: bizRow.name, slug: bizRow.slug } : null)
 
-      const pendingFetch: Promise<{ pending?: PendingCustomer[]; error?: string }> = fetch(
-        '/api/staff/pending-signups',
+      const pendingFetch: Promise<{ pending?: PendingCustomer[]; count?: number; error?: string }> = fetch(
+        wantPendingDetail ? '/api/staff/pending-signups' : '/api/staff/pending-signups?countOnly=1',
         { method: 'GET', cache: 'no-store' }
       )
         .then(async (r) => {
-          const j = (await r.json().catch(() => ({}))) as { pending?: PendingCustomer[]; error?: string }
+          const j = (await r.json().catch(() => ({}))) as {
+            pending?: PendingCustomer[]
+            count?: number
+            error?: string
+          }
           if (!r.ok) return { error: j.error || `HTTP ${r.status}` }
-          return { pending: j.pending ?? [] }
+          if (wantPendingDetail) return { pending: j.pending ?? [] }
+          return { count: j.count ?? 0 }
         })
         .catch((e: unknown) => {
           const raw = e instanceof Error ? e.message : 'Network error'
@@ -660,7 +668,13 @@ export default function DashboardPage() {
       }
 
       const convoRows = convRes.data || []
-      setPendingCustomers((pendingRes.pending || []) as PendingCustomer[])
+      if (wantPendingDetail) {
+        const list = (pendingRes.pending || []) as PendingCustomer[]
+        setPendingCustomers(list)
+        setPendingSignupCount(list.filter((c) => c.account_status === 'pending').length)
+      } else if (typeof pendingRes.count === 'number') {
+        setPendingSignupCount(pendingRes.count)
+      }
 
       if (Array.isArray(reportRes.data) && reportRes.data.length > 0) {
         setReports(
@@ -1227,6 +1241,13 @@ export default function DashboardPage() {
       cancelled = true
     }
   }, [router, supabase, refreshDashboard])
+
+  useEffect(() => {
+    if (activeTab !== 'users') return
+    const p = profileRef.current
+    if (!p?.business_id) return
+    void refreshDashboard(p, { pendingDetail: true })
+  }, [activeTab, refreshDashboard])
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -2929,12 +2950,12 @@ export default function DashboardPage() {
   }
 
   const metrics = useMemo(() => {
-    const pending = pendingCustomers.filter((c) => c.account_status === 'pending').length
+    const pending = pendingSignupCount
     const openThreads = convoList.length
     const reportCount = reports.length
     const members = activeMembers.length
     return { pending, unread: openThreads, reportCount, members }
-  }, [pendingCustomers, convoList, reports, activeMembers])
+  }, [pendingSignupCount, convoList, reports, activeMembers])
 
   const inboxUnreadTotal = useMemo(
     () => convoList.reduce((sum, c) => sum + c.unreadCount, 0),
@@ -4818,13 +4839,13 @@ export default function DashboardPage() {
               use the app until approved.
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <StatCard icon={<User2 className="w-4 h-4" />} label="Pending" value={pendingCustomers.length} accent="yellow" />
+              <StatCard icon={<User2 className="w-4 h-4" />} label="Pending" value={pendingSignupCount} accent="yellow" />
               <StatCard icon={<Users className="w-4 h-4" />} label="Active" value={activeMembers.length} accent="green" />
               <StatCard icon={<Ban className="w-4 h-4" />} label="Suspended" value={suspendedMembers.length} accent="red" />
               <StatCard
                 icon={<ClipboardList className="w-4 h-4" />}
                 label="Total managed"
-                value={pendingCustomers.length + activeMembers.length + suspendedMembers.length}
+                value={pendingSignupCount + activeMembers.length + suspendedMembers.length}
                 accent="purple"
               />
             </div>

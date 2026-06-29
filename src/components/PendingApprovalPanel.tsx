@@ -135,7 +135,8 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
         if (result.kind === 'status' && result.status === 'pending') return
         applyStatusResult(result)
       })
-    }, 8000)
+    // Realtime subscription handles instant updates; poll occasionally as a fallback only.
+    }, 45_000)
 
     return () => window.clearInterval(interval)
   }, [loading, status, userId, fetchAccountStatus, applyStatusResult, needsSignIn])
@@ -180,7 +181,7 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
         return
       }
       setCheckFeedback(
-        'Still waiting for team approval. We check every few seconds and will open your feed as soon as you are approved.'
+        'Still waiting for team approval. We check periodically and will open your feed as soon as you are approved.'
       )
     } finally {
       setChecking(false)

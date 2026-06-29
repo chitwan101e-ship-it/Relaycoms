@@ -50,9 +50,41 @@ export async function redirectIfAuthenticated(
   supabase: SupabaseClient,
   router: AppRouterInstance
 ): Promise<boolean> {
-  const path = await resolveAuthenticatedPath(supabase)
-  if (!path) return false
-  router.replace(path)
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  if (!session?.user) return false
+
+  const { data: prof, error: pErr } = await supabase
+    .from('profiles')
+    .select('role, business_role, account_status, deleted_at')
+    .eq('id', session.user.id)
+    .single()
+
+  if (pErr || !prof) return false
+
+  const row = prof as ProfileAuthRow
+  if (row.deleted_at) return false
+
+  if (row.role === 'customer' && row.account_status === 'suspended') {
+    router.replace('/account-suspended')
+    return true
+  }
+
+  if (row.role === 'customer' && row.account_status !== 'approved') {
+    router.replace('/pending-approval')
+    return true
+  }
+
+  if (row.account_status !== 'approved') return false
+
+  if (row.role === 'business' && row.business_role) {
+    router.replace('/dashboard')
+    return true
+  }
+  if (row.role === 'business' && !row.business_role) return false
+
+  router.replace('/feed')
   return true
 }
 
