@@ -1,5 +1,5 @@
 // src/app/api/auth/register/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { normalizePhoneForDedup } from '@/lib/phoneNormalize'
 import { notifyEveryBusinessAdmin } from '@/lib/notifyStaffAdmins'
@@ -32,6 +32,13 @@ function cleanSignupQuestion(raw: unknown): string | null {
   const s = raw.trim().replace(/\s+/g, ' ')
   if (!s) return null
   return s.slice(0, 500)
+}
+
+/** Run welcome/notification work after the HTTP response to shorten signup under DB load. */
+function deferRegisterFollowUp(task: () => Promise<void>) {
+  after(() => {
+    void task().catch((err) => console.error('[register] deferred follow-up:', err))
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -155,11 +162,13 @@ export async function POST(req: NextRequest) {
 
     if (phoneOwner) {
       await logAttempt(true, 'duplicate_phone')
-      await notifyEveryBusinessAdmin(supabase, {
-        title: 'Signup blocked: duplicate phone',
-        body: `Someone tried to register with a phone number already on file (@${phoneOwner.username}, status ${phoneOwner.account_status}). New attempt: email ${String(email).toLowerCase()}, username @${cleanUsername}.`,
-        link: '/notifications',
-      })
+      deferRegisterFollowUp(() =>
+        notifyEveryBusinessAdmin(supabase, {
+          title: 'Signup blocked: duplicate phone',
+          body: `Someone tried to register with a phone number already on file (@${phoneOwner.username}, status ${phoneOwner.account_status}). New attempt: email ${String(email).toLowerCase()}, username @${cleanUsername}.`,
+          link: '/notifications',
+        })
+      )
 
       return NextResponse.json(
         { error: 'An account with this phone number already exists or is pending approval.' },
@@ -227,34 +236,43 @@ export async function POST(req: NextRequest) {
 
     const autoApproved = isAutoApproveSignupsEnabled()
     const customerName = `${firstName} ${lastName}`.trim() || cleanUsername
+    const emailNorm = String(email).trim().toLowerCase()
+    const phoneDisplay = String(phone).trim()
+    const referralSuffix = referral ? ` — referral: @${referral}` : ''
+    const questionSuffix = question
+      ? ` — question: "${question.slice(0, 120)}${question.length > 120 ? '…' : ''}"`
+      : ''
 
-    if (autoApproved) {
-      const business = await resolvePrimaryBusinessForSignup(supabase)
-      if (business) {
-        const staffSenderId = (await resolveBusinessAdminStaffId(supabase, business.id)) ?? userId
-        await completeCustomerApproval(supabase, {
-          customerId: userId,
-          customerName,
-          username: cleanUsername,
-          email: String(email).trim().toLowerCase(),
-          businessId: business.id,
-          businessName: business.name,
-          staffSenderId,
+    deferRegisterFollowUp(async () => {
+      if (autoApproved) {
+        const business = await resolvePrimaryBusinessForSignup(supabase)
+        if (business) {
+          const staffSenderId = (await resolveBusinessAdminStaffId(supabase, business.id)) ?? userId
+          await completeCustomerApproval(supabase, {
+            customerId: userId,
+            customerName,
+            username: cleanUsername,
+            email: emailNorm,
+            businessId: business.id,
+            businessName: business.name,
+            staffSenderId,
+          })
+        }
+
+        await notifyEveryBusinessAdmin(supabase, {
+          title: 'New customer signed up',
+          body: `@${cleanUsername} (${customerName}) — phone: ${phoneDisplay}${referralSuffix}${questionSuffix}. Account was approved automatically.`,
+          link: '/notifications',
         })
+        return
       }
 
       await notifyEveryBusinessAdmin(supabase, {
-        title: 'New customer signed up',
-        body: `@${cleanUsername} (${customerName}) — phone: ${String(phone).trim()}${referral ? ` — referral: @${referral}` : ''}${question ? ` — question: "${question.slice(0, 120)}${question.length > 120 ? '…' : ''}"` : ''}. Account was approved automatically.`,
-        link: '/notifications',
-      })
-    } else {
-      await notifyEveryBusinessAdmin(supabase, {
         title: 'New customer signup pending',
-        body: `@${cleanUsername} (${customerName}) — phone: ${String(phone).trim()}${referral ? ` — referral: @${referral}` : ''}${question ? ` — question: "${question.slice(0, 120)}${question.length > 120 ? '…' : ''}"` : ''}. Review pending accounts in the dashboard.`,
+        body: `@${cleanUsername} (${customerName}) — phone: ${phoneDisplay}${referralSuffix}${questionSuffix}. Review pending accounts in the dashboard.`,
         link: '/notifications',
       })
-    }
+    })
 
     return NextResponse.json({
       success: true,

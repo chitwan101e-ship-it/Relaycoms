@@ -140,7 +140,7 @@ async function withSupabaseSession(req: NextRequest, res: NextResponse) {
     await Promise.race([
       supabase.auth.getUser(),
       new Promise<void>((resolve) => {
-        setTimeout(resolve, 12_000)
+        setTimeout(resolve, 5_000)
       }),
     ])
   } catch {
