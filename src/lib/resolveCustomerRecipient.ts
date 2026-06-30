@@ -124,6 +124,57 @@ export async function resolveCustomerRecipient(
 
 /** PostgREST returns at most 1000 rows per request unless paginated. */
 const MEMBER_ID_PAGE_SIZE = 1000
+const PROFILE_LIST_PAGE_SIZE = 1000
+
+export type CustomerProfileSummary = {
+  id: string
+  first_name: string
+  last_name: string
+  username: string
+  account_status: string
+  avatar_url?: string | null
+}
+
+/** All customer profiles with the given statuses (paginated — not limited to follow/conversation links). */
+export async function listAllCustomerProfiles(
+  client: SupabaseClient,
+  opts?: { statuses?: ('approved' | 'suspended')[] }
+): Promise<CustomerProfileSummary[]> {
+  const statuses = opts?.statuses ?? ['approved', 'suspended']
+  const rows: CustomerProfileSummary[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await client
+      .from('profiles')
+      .select('id, first_name, last_name, username, account_status, avatar_url')
+      .eq('role', 'customer')
+      .in('account_status', statuses)
+      .is('deleted_at', null)
+      .order('username')
+      .range(from, from + PROFILE_LIST_PAGE_SIZE - 1)
+    if (error) throw error
+    if (!data?.length) break
+    for (const row of data) {
+      rows.push({
+        id: row.id as string,
+        first_name: (row.first_name as string) ?? '',
+        last_name: (row.last_name as string) ?? '',
+        username: (row.username as string) ?? '',
+        account_status: (row.account_status as string) ?? '',
+        avatar_url: (row.avatar_url as string | null) ?? null,
+      })
+    }
+    if (data.length < PROFILE_LIST_PAGE_SIZE) break
+    from += PROFILE_LIST_PAGE_SIZE
+  }
+  return rows
+}
+
+/** All approved customer ids (paginated). */
+export async function listAllApprovedCustomerIds(client: SupabaseClient): Promise<string[]> {
+  const profiles = await listAllCustomerProfiles(client, { statuses: ['approved'] })
+  return profiles.map((p) => p.id)
+}
 
 async function fetchBusinessMemberIdColumn(
   client: SupabaseClient,

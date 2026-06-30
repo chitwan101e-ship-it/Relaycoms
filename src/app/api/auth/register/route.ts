@@ -11,8 +11,7 @@ import { isAuthEmailTakenError, resolveSignupEmailConflict } from '@/lib/authEma
 import {
   completeCustomerApproval,
   isAutoApproveSignupsEnabled,
-  resolveBusinessAdminStaffId,
-  resolvePrimaryBusinessForSignup,
+  resolveBusinessForNewCustomerSignup,
 } from '@/lib/signupApproval'
 import crypto from 'crypto'
 
@@ -243,22 +242,31 @@ export async function POST(req: NextRequest) {
       ? ` — question: "${question.slice(0, 120)}${question.length > 120 ? '…' : ''}"`
       : ''
 
-    deferRegisterFollowUp(async () => {
-      if (autoApproved) {
-        const business = await resolvePrimaryBusinessForSignup(supabase)
-        if (business) {
-          const staffSenderId = (await resolveBusinessAdminStaffId(supabase, business.id)) ?? userId
+    if (autoApproved) {
+      const target = await resolveBusinessForNewCustomerSignup(supabase)
+      if (target) {
+        try {
           await completeCustomerApproval(supabase, {
             customerId: userId,
             customerName,
             username: cleanUsername,
             email: emailNorm,
-            businessId: business.id,
-            businessName: business.name,
-            staffSenderId,
+            businessId: target.id,
+            businessName: target.name,
+            staffSenderId: target.staffSenderId,
           })
+        } catch (err) {
+          console.error('[register] completeCustomerApproval:', err)
         }
+      } else {
+        console.error(
+          '[register] auto-approve: no business with staff found — welcome DM and follow skipped. Set PRIMARY_SUPPORT_BUSINESS_SLUG=juwa-bros in env.'
+        )
+      }
+    }
 
+    deferRegisterFollowUp(async () => {
+      if (autoApproved) {
         await notifyEveryBusinessAdmin(supabase, {
           title: 'New customer signed up',
           body: `@${cleanUsername} (${customerName}) — phone: ${phoneDisplay}${referralSuffix}${questionSuffix}. Account was approved automatically.`,

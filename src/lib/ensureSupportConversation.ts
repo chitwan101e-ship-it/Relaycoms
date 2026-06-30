@@ -6,15 +6,25 @@ export async function ensureSupportConversation(
   businessId: string,
   customerId: string
 ): Promise<{ conversationId: string } | { error: string }> {
-  const { data: existing, error: exErr } = await admin
+  const { data: existingRows, error: exErr } = await admin
     .from('conversations')
     .select('id')
     .eq('business_id', businessId)
     .eq('customer_id', customerId)
-    .maybeSingle()
+    .order('created_at', { ascending: true })
+    .limit(5)
 
   if (exErr) return { error: exErr.message }
-  if (existing?.id) return { conversationId: existing.id as string }
+  if (existingRows?.length) {
+    if (existingRows.length > 1) {
+      console.warn(
+        '[ensureSupportConversation] multiple threads for business/customer — using oldest',
+        businessId,
+        customerId
+      )
+    }
+    return { conversationId: existingRows[0].id as string }
+  }
 
   const { data: created, error: crErr } = await admin
     .from('conversations')

@@ -3,7 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { getApprovedCustomerIdsForInboxLabelPresets } from '@/lib/inboxLabelRecipients'
 import { sendBulkCustomerNotificationEmails } from '@/lib/sendBulkCustomerNotificationEmails'
 
-const MAX_RECIPIENTS = 500
+const MAX_RECIPIENTS = 10_000
 
 export async function POST(req: NextRequest) {
   try {

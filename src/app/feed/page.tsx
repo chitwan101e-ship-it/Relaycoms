@@ -21,6 +21,7 @@ import {
   type MessageReplyEmbed,
   type ReplyTargetMessage,
 } from '@/lib/customerMessaging'
+import { pickPrimaryBusinessFromList } from '@/lib/signupApproval'
 import RelayLogo from '@/components/RelayLogo'
 import { CustomerMobileFooterNav } from '@/components/CustomerMobileFooterNav'
 import { CustomerRefreshButton } from '@/components/CustomerRefreshButton'
@@ -624,7 +625,21 @@ export default function FeedPage() {
       if (!cancelled) setBusinesses(bizRows)
 
       const { data: followsRows } = await supabase.from('follows').select('business_id').eq('user_id', session.user.id)
-      const fids = (followsRows || []).map((r) => (r as { business_id: string }).business_id)
+      let fids = (followsRows || []).map((r) => (r as { business_id: string }).business_id)
+      if (fids.length === 0 && bizRows.length > 0) {
+        const primary = pickPrimaryBusinessFromList(bizRows)
+        if (primary) {
+          const { error: followErr } = await supabase.from('follows').insert({
+            user_id: session.user.id,
+            business_id: primary.id,
+          })
+          if (!followErr || followErr.code === '23505') {
+            fids = [primary.id]
+          } else {
+            console.error('[feed] ensure follow:', followErr.message)
+          }
+        }
+      }
       followedBusinessIdsRef.current = fids
       setFollowedBusinessIds(fids)
 

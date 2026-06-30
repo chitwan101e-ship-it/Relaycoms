@@ -37,6 +37,40 @@ async function assignNewlyApprovedLabel(
 export const DEFAULT_APPROVAL_WELCOME_TEMPLATE =
   "Welcome, {customer_name}! Your account has been approved. We're glad to have you at Juwa Bros. Message us here anytime if you need help."
 
+const WELCOME_BODY_PREFIX = 'Welcome,'
+
+async function conversationHasWelcomeDm(
+  admin: SupabaseClient,
+  conversationId: string,
+  businessId: string
+): Promise<boolean> {
+  const { data: staffRows, error: staffErr } = await admin
+    .from('profiles')
+    .select('id')
+    .eq('role', 'business')
+    .eq('business_id', businessId)
+    .is('deleted_at', null)
+  if (staffErr) {
+    console.error('[approval-welcome] staff list for welcome check:', staffErr.message)
+    return false
+  }
+  const staffIds = (staffRows || []).map((r) => r.id as string)
+  if (staffIds.length === 0) return false
+
+  const { data, error } = await admin
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .in('sender_id', staffIds)
+    .ilike('body', `${WELCOME_BODY_PREFIX}%`)
+    .limit(1)
+  if (error) {
+    console.error('[approval-welcome] welcome check:', error.message)
+    return false
+  }
+  return (data?.length ?? 0) > 0
+}
+
 export function renderApprovalWelcomeMessage(params: {
   customerName: string
   username: string
@@ -46,6 +80,8 @@ export function renderApprovalWelcomeMessage(params: {
     .replaceAll('{username}', params.username)
     .replaceAll('{business}', params.businessName)
 }
+
+export type WelcomeMessageResult = { sent: boolean; reason?: string }
 
 /**
  * Creates a support thread (if needed) and sends the default welcome message when a customer is approved.
@@ -60,29 +96,34 @@ export async function sendApprovalWelcomeMessage(
     customerName: string
     username: string
     businessName: string
+    skipIfWelcomeExists?: boolean
   }
-): Promise<void> {
-  const { businessId, customerId, staffSenderId, customerName, username, businessName } = opts
+): Promise<WelcomeMessageResult> {
+  const {
+    businessId,
+    customerId,
+    staffSenderId,
+    customerName,
+    username,
+    businessName,
+    skipIfWelcomeExists = true,
+  } = opts
 
   try {
     const ensured = await ensureSupportConversation(admin, businessId, customerId)
     if ('error' in ensured) {
-      console.error('[approval-welcome] conversation:', ensured.error)
-      return
+      const reason = `conversation: ${ensured.error}`
+      console.error('[approval-welcome]', reason)
+      return { sent: false, reason }
     }
     const conversationId = ensured.conversationId
 
     await assignNewlyApprovedLabel(admin, businessId, conversationId)
 
-    const { count, error: countErr } = await admin
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('conversation_id', conversationId)
-    if (countErr) {
-      console.error('[approval-welcome] message count:', countErr.message)
-      return
+    if (skipIfWelcomeExists) {
+      const already = await conversationHasWelcomeDm(admin, conversationId, businessId)
+      if (already) return { sent: false, reason: 'welcome already sent' }
     }
-    if ((count ?? 0) > 0) return
 
     const body = renderApprovalWelcomeMessage({ customerName, username, businessName })
     const preview = body.trim().slice(0, 160)
@@ -93,8 +134,9 @@ export async function sendApprovalWelcomeMessage(
       body,
     })
     if (msgErr) {
-      console.error('[approval-welcome] message insert:', msgErr.message)
-      return
+      const reason = `message insert: ${msgErr.message}`
+      console.error('[approval-welcome]', reason)
+      return { sent: false, reason }
     }
 
     const { error: updErr } = await admin
@@ -113,7 +155,10 @@ export async function sendApprovalWelcomeMessage(
       conversation_id: conversationId,
     })
     if (nErr) console.error('[approval-welcome] customer notification:', nErr.message)
+    return { sent: true }
   } catch (e) {
+    const reason = e instanceof Error ? e.message : 'unknown error'
     console.error('[approval-welcome]', e)
+    return { sent: false, reason }
   }
 }

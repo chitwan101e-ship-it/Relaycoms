@@ -19,6 +19,7 @@ import {
   Loader2,
   LogOut,
   Megaphone,
+  MessageCircle,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -64,7 +65,14 @@ import { FeedPostImage } from '@/components/FeedPostImage'
 import { LinkifiedText } from '@/components/LinkifiedText'
 import { DesktopNotificationPrompt } from '@/components/DesktopNotificationPrompt'
 import { useDesktopMessageNotifications } from '@/hooks/useDesktopMessageNotifications'
-import { listBusinessMemberIds } from '@/lib/resolveCustomerRecipient'
+import { listAllApprovedCustomerIds, listAllCustomerProfiles } from '@/lib/resolveCustomerRecipient'
+import {
+  fetchAllBusinessConversations,
+  fetchInboxPreviews,
+  fetchInboxPreviewsLegacy,
+  fetchInboxUnreadCounts,
+  INBOX_QUERY_CHUNK,
+} from '@/lib/staffInbox'
 import { isAutoApproveSignupsEnabled } from '@/lib/signupApproval'
 
 const autoApproveSignups = isAutoApproveSignupsEnabled()
@@ -127,11 +135,11 @@ type ThreadMessage = {
   profiles?: ThreadMessageSenderEmbed | ThreadMessageSenderEmbed[] | null
 }
 
-/** Inbox shows the N most recently updated threads (not expired — older threads drop off when volume is high). */
-const INBOX_THREAD_LIMIT = 500
 /** PostgREST `.in()` filters are sent on the URL; chunk to stay under proxy length limits. */
 const PROFILE_ID_IN_CHUNK = 200
 const CONVO_ID_IN_CHUNK = 200
+const COMMENT_PROFILE_EMBED =
+  'id, username, first_name, last_name, avatar_url, role, business_role'
 
 /** Computed inbox chip — not stored in conversation_inbox_labels (like Meta Business Suite). */
 const INBOX_UNREAD_VIRTUAL_LABEL: InboxLabelRow = {
@@ -208,6 +216,23 @@ type BasicProfile = {
   avatar_url?: string | null
   role?: string
   business_role?: string | null
+}
+
+type CommentWithProfileEmbed = {
+  id: string
+  announcement_id: string
+  user_id: string
+  parent_comment_id: string | null
+  body: string
+  created_at: string
+  hidden_at?: string | null
+  profiles?: BasicProfile | BasicProfile[] | null
+}
+
+function displayNameFromProfile(p: BasicProfile | null | undefined): string {
+  if (!p) return 'Member'
+  const full = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim()
+  return full || `@${p.username}`
 }
 
 type CommentPreview = {
@@ -485,6 +510,7 @@ export default function DashboardPage() {
   const [inboxContactOpen, setInboxContactOpen] = useState(false)
   const [staffNotifyUnread, setStaffNotifyUnread] = useState(0)
   const [inboxRefreshing, setInboxRefreshing] = useState(false)
+  const [welcomeBackfillBusy, setWelcomeBackfillBusy] = useState(false)
   const [inboxLabelCatalog, setInboxLabelCatalog] = useState<InboxLabelRow[]>([])
   const [inboxLabelsPopoverOpen, setInboxLabelsPopoverOpen] = useState(false)
   const inboxLabelsPopoverRef = useRef<HTMLDivElement>(null)
@@ -622,13 +648,17 @@ export default function DashboardPage() {
           }
         })
 
-      const [convRes, pendingRes, reportRes, memberIdsRes, cannedRes] = await Promise.all([
-        supabase
-          .from('conversations')
-          .select('id, customer_id, updated_at')
-          .eq('business_id', bid)
-          .order('updated_at', { ascending: false })
-          .limit(INBOX_THREAD_LIMIT),
+      let convoRows: { id: string; customer_id: string; updated_at: string }[] = []
+      const errs: string[] = []
+
+      try {
+        convoRows = await fetchAllBusinessConversations(supabase, bid)
+      } catch (convErr) {
+        const msg = convErr instanceof Error ? convErr.message : 'Failed to load conversations'
+        errs.push(`conversations: ${msg}`)
+      }
+
+      const [pendingRes, reportRes, memberProfilesRes, cannedRes] = await Promise.all([
         pendingFetch,
         supabase
           .from('admin_reports')
@@ -636,8 +666,8 @@ export default function DashboardPage() {
           .eq('business_id', bid)
           .order('created_at', { ascending: false })
           .limit(20),
-        listBusinessMemberIds(supabase, bid)
-          .then((ids) => ({ ids }))
+        listAllCustomerProfiles(supabase)
+          .then((rows) => ({ rows }))
           .catch((e: unknown) => ({
             error: e instanceof Error ? e.message : 'Failed to load member list',
           })),
@@ -649,11 +679,9 @@ export default function DashboardPage() {
           .order('title', { ascending: true }),
       ])
 
-      const errs: string[] = []
-      if (convRes.error) errs.push(`conversations: ${convRes.error.message}`)
       if (pendingRes.error) errs.push(`pending: ${pendingRes.error}`)
       if (reportRes.error) errs.push(`reports: ${reportRes.error.message}`)
-      if ('error' in memberIdsRes && memberIdsRes.error) errs.push(`members: ${memberIdsRes.error}`)
+      if ('error' in memberProfilesRes && memberProfilesRes.error) errs.push(`members: ${memberProfilesRes.error}`)
       if (cannedRes.error) errs.push(`canned replies: ${cannedRes.error.message}`)
       if (errs.length) setLoadError(errs.join(' · '))
 
@@ -670,7 +698,6 @@ export default function DashboardPage() {
         setCannedReplies([])
       }
 
-      const convoRows = convRes.data || []
       if (wantPendingDetail) {
         const list = (pendingRes.pending || []) as PendingCustomer[]
         setPendingCustomers(list)
@@ -716,58 +743,34 @@ export default function DashboardPage() {
       }
 
       const previewByConvo: Record<string, { body: string; created_at: string }> = {}
-      const unreadByConvo: Record<string, number> = {}
+      let unreadByConvo: Record<string, number> = {}
       if (convIds.length > 0) {
-        const { data: previews, error: previewErr } = await supabase.rpc('inbox_latest_previews', {
-          p_conversation_ids: convIds,
-        })
-        if (previewErr) {
-          const msg = previewErr.message || ''
+        try {
+          Object.assign(previewByConvo, await fetchInboxPreviews(supabase, convIds))
+        } catch (previewErr) {
+          const err = previewErr as { message?: string; code?: string }
+          const msg = err.message || ''
           const missingRpc =
-            previewErr.code === 'PGRST202' ||
-            previewErr.code === '42883' ||
+            err.code === 'PGRST202' ||
+            err.code === '42883' ||
             /does not exist|schema cache|Could not find the function/i.test(msg)
           if (missingRpc) {
-            const { data: msgs, error: me } = await supabase
-              .from('messages')
-              .select('conversation_id, body, created_at')
-              .in('conversation_id', convIds)
-              .order('created_at', { ascending: false })
-              .limit(10000)
-            if (me) setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages: ${me.message}`)
-            for (const m of msgs || []) {
-              const row = m as { conversation_id: string; body: string; created_at: string }
-              const prev = previewByConvo[row.conversation_id]
-              if (!prev || new Date(row.created_at) > new Date(prev.created_at)) {
-                previewByConvo[row.conversation_id] = { body: row.body, created_at: row.created_at }
-              }
+            try {
+              Object.assign(previewByConvo, await fetchInboxPreviewsLegacy(supabase, convIds))
+            } catch (legacyErr) {
+              const legacyMsg = legacyErr instanceof Error ? legacyErr.message : 'messages preview failed'
+              setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages: ${legacyMsg}`)
             }
           } else {
             setLoadError((prev) => (prev ? `${prev} · ` : '') + `inbox_latest_previews: ${msg}`)
           }
-        } else {
-          for (const row of previews || []) {
-            const r = row as { conversation_id: string; body: string; created_at: string }
-            previewByConvo[r.conversation_id] = { body: r.body, created_at: r.created_at }
-          }
         }
 
-        const customerByConvo = Object.fromEntries(
-          convoRows.map((r: { id: string; customer_id: string }) => [r.id, r.customer_id])
-        ) as Record<string, string>
-
-        const { data: unreadRows, error: ue } = await supabase
-          .from('messages')
-          .select('conversation_id, sender_id')
-          .in('conversation_id', convIds)
-          .or('read.eq.false,read.is.null')
-        if (ue) setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages(unread): ${ue.message}`)
-        for (const m of unreadRows || []) {
-          const row = m as { conversation_id: string; sender_id: string }
-          const cust = customerByConvo[row.conversation_id]
-          if (cust && row.sender_id === cust) {
-            unreadByConvo[row.conversation_id] = (unreadByConvo[row.conversation_id] || 0) + 1
-          }
+        try {
+          unreadByConvo = await fetchInboxUnreadCounts(supabase, convoRows)
+        } catch (ue) {
+          const ueMsg = ue instanceof Error ? ue.message : 'unread count failed'
+          setLoadError((prev) => (prev ? `${prev} · ` : '') + `messages(unread): ${ueMsg}`)
         }
       }
 
@@ -789,13 +792,16 @@ export default function DashboardPage() {
       const defById = Object.fromEntries(labelCatalog.map((d) => [d.id, d])) as Record<string, InboxLabelRow>
       const labelsByConvo: Record<string, InboxLabelRow[]> = {}
       if (convIds.length > 0 && !defErr) {
-        const { data: assignRows, error: assignErr } = await supabase
-          .from('conversation_inbox_labels')
-          .select('conversation_id, label_id')
-          .in('conversation_id', convIds)
-        if (assignErr)
-          setLoadError((prev) => (prev ? `${prev} · ` : '') + `conversation_inbox_labels: ${assignErr.message}`)
-        else {
+        for (let i = 0; i < convIds.length; i += INBOX_QUERY_CHUNK) {
+          const slice = convIds.slice(i, i + INBOX_QUERY_CHUNK)
+          const { data: assignRows, error: assignErr } = await supabase
+            .from('conversation_inbox_labels')
+            .select('conversation_id, label_id')
+            .in('conversation_id', slice)
+          if (assignErr) {
+            setLoadError((prev) => (prev ? `${prev} · ` : '') + `conversation_inbox_labels: ${assignErr.message}`)
+            break
+          }
           for (const row of assignRows || []) {
             const r = row as { conversation_id: string; label_id: string }
             const d = defById[r.label_id]
@@ -803,12 +809,12 @@ export default function DashboardPage() {
             if (!labelsByConvo[r.conversation_id]) labelsByConvo[r.conversation_id] = []
             labelsByConvo[r.conversation_id].push(d)
           }
-          for (const cid of Object.keys(labelsByConvo)) {
-            labelsByConvo[cid].sort((a, b) => {
-              if (a.is_system !== b.is_system) return a.is_system ? -1 : 1
-              return a.name.localeCompare(b.name)
-            })
-          }
+        }
+        for (const cid of Object.keys(labelsByConvo)) {
+          labelsByConvo[cid].sort((a, b) => {
+            if (a.is_system !== b.is_system) return a.is_system ? -1 : 1
+            return a.name.localeCompare(b.name)
+          })
         }
       }
 
@@ -841,35 +847,13 @@ export default function DashboardPage() {
         if (!bellErr) setStaffNotifyUnread(bellCount ?? 0)
       }
 
-      const merged = 'ids' in memberIdsRes ? memberIdsRes.ids : []
-
-      if (merged.length === 0) {
-        setActiveMembers([])
-        setSuspendedMembers([])
-      } else {
-        const rows: ActiveMember[] = []
-        for (let i = 0; i < merged.length; i += PROFILE_ID_IN_CHUNK) {
-          const slice = merged.slice(i, i + PROFILE_ID_IN_CHUNK)
-          const { data: memberRows, error: me } = await supabase
-            .from('profiles')
-            .select('id, first_name, last_name, username, account_status, avatar_url')
-            .in('id', slice)
-            .eq('role', 'customer')
-            .in('account_status', ['approved', 'suspended'])
-            .is('deleted_at', null)
-          if (me) {
-            setLoadError((prev) => (prev ? `${prev} · ` : '') + `members: ${me.message}`)
-            break
-          }
-          rows.push(...((memberRows || []) as ActiveMember[]))
-        }
-        const approved = rows.filter((r) => r.account_status === 'approved')
-        const suspended = rows.filter((r) => r.account_status === 'suspended')
-        approved.sort((a, b) => (a.username || '').localeCompare(b.username || ''))
-        suspended.sort((a, b) => (a.username || '').localeCompare(b.username || ''))
-        setActiveMembers(approved)
-        setSuspendedMembers(suspended)
-      }
+      const memberProfiles = 'rows' in memberProfilesRes ? memberProfilesRes.rows : []
+      const approved = memberProfiles.filter((r) => r.account_status === 'approved')
+      const suspended = memberProfiles.filter((r) => r.account_status === 'suspended')
+      approved.sort((a, b) => (a.username || '').localeCompare(b.username || ''))
+      suspended.sort((a, b) => (a.username || '').localeCompare(b.username || ''))
+      setActiveMembers(approved)
+      setSuspendedMembers(suspended)
     },
     [supabase]
   )
@@ -899,30 +883,47 @@ export default function DashboardPage() {
           supabase.from('reactions').select('announcement_id, user_id').in('announcement_id', ids).eq('reaction', 'like'),
           supabase
             .from('comments')
-            .select('id, announcement_id, user_id, parent_comment_id, body, created_at, hidden_at')
+            .select(
+              `
+              id,
+              announcement_id,
+              user_id,
+              parent_comment_id,
+              body,
+              created_at,
+              hidden_at,
+              profiles ( ${COMMENT_PROFILE_EMBED} )
+            `
+            )
             .in('announcement_id', ids)
             .is('deleted_at', null),
         ])
 
-        const userIds = new Set<string>()
-        for (const r of likes || []) userIds.add((r as { user_id: string }).user_id)
-        for (const c of coms || []) userIds.add((c as { user_id: string }).user_id)
-
-        let profileMap = new Map<string, BasicProfile>()
-        if (userIds.size > 0) {
-          const { data: rows } = await supabase
-            .from('profiles')
-            .select('id, username, first_name, last_name, avatar_url, role, business_role')
-            .in('id', [...userIds])
-          profileMap = new Map((rows || []).map((row) => [row.id, row as BasicProfile]))
+        const profileMap = new Map<string, BasicProfile>()
+        for (const c of coms || []) {
+          const row = c as CommentWithProfileEmbed
+          const emb = oneEmbed(row.profiles)
+          if (emb) profileMap.set(row.user_id, emb)
         }
 
-        const displayNameFor = (userId: string) => {
-          const p = profileMap.get(userId)
-          if (!p) return 'Member'
-          const full = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim()
-          return full || `@${p.username}`
+        const likeUserIds = new Set<string>()
+        for (const r of likes || []) likeUserIds.add((r as { user_id: string }).user_id)
+        if (likeUserIds.size > 0) {
+          const likeIds = [...likeUserIds]
+          for (let i = 0; i < likeIds.length; i += PROFILE_ID_IN_CHUNK) {
+            const slice = likeIds.slice(i, i + PROFILE_ID_IN_CHUNK)
+            const { data: rows, error: pe } = await supabase
+              .from('profiles')
+              .select('id, username, first_name, last_name, avatar_url, role, business_role')
+              .in('id', slice)
+            if (pe) console.error('[loadMyAnnouncements] like profiles', pe)
+            for (const row of rows || []) {
+              profileMap.set(row.id, row as BasicProfile)
+            }
+          }
         }
+
+        const displayNameFor = (userId: string) => displayNameFromProfile(profileMap.get(userId))
 
         const meta: Record<
           string,
@@ -947,25 +948,20 @@ export default function DashboardPage() {
           }
         }
         for (const c of coms || []) {
-          const row = c as {
-            id: string
-            announcement_id: string
-            user_id: string
-            parent_comment_id: string | null
-            body: string
-            created_at: string
-          }
+          const row = c as CommentWithProfileEmbed
           const aid = row.announcement_id
+          const prof = oneEmbed(row.profiles) ?? profileMap.get(row.user_id) ?? null
+          if (prof && !profileMap.has(row.user_id)) profileMap.set(row.user_id, prof)
           if (meta[aid]) {
             meta[aid].comments += 1
-            const name = displayNameFor(row.user_id)
+            const name = displayNameFromProfile(prof)
             if (!meta[aid].commentedBy.includes(name)) meta[aid].commentedBy.push(name)
             meta[aid].commentPreviews.push({
               id: row.id,
               body: row.body,
               created_at: row.created_at,
               userName: name,
-              userAvatar: profileMap.get(row.user_id)?.avatar_url ?? null,
+              userAvatar: prof?.avatar_url ?? null,
             })
             meta[aid].commentDetails.push({
               id: row.id,
@@ -973,10 +969,10 @@ export default function DashboardPage() {
               parent_comment_id: row.parent_comment_id ?? null,
               body: row.body,
               created_at: row.created_at,
-              hidden_at: (row as { hidden_at?: string | null }).hidden_at ?? null,
+              hidden_at: row.hidden_at ?? null,
               userName: name,
-              userAvatar: profileMap.get(row.user_id)?.avatar_url ?? null,
-              isStaff: profileMap.get(row.user_id)?.role === 'business',
+              userAvatar: prof?.avatar_url ?? null,
+              isStaff: prof?.role === 'business',
             })
           }
         }
@@ -1330,20 +1326,12 @@ export default function DashboardPage() {
     const staffUserId = p.id
 
     let timer: number | null = null
-    let slowTimer: number | null = null
     const queueRefresh = () => {
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         const current = profileRef.current
         if (current?.business_id) void refreshDashboard(current)
       }, 400)
-    }
-    const queueSlowRefresh = () => {
-      if (slowTimer) window.clearTimeout(slowTimer)
-      slowTimer = window.setTimeout(() => {
-        const current = profileRef.current
-        if (current?.business_id) void refreshDashboard(current)
-      }, 900)
     }
 
     const bumpInboxOnCustomerMessage = (payload: { new: Record<string, unknown> }): boolean => {
@@ -1360,13 +1348,44 @@ export default function DashboardPage() {
 
       const preview = (msg.body ?? '').trim() || conv.preview
       const updated_at = msg.created_at || new Date().toISOString()
-      setConvoList((prev) =>
-        prev.map((c) =>
-          c.id === msg.conversation_id
-            ? { ...c, unreadCount: c.unreadCount + 1, preview, updated_at }
-            : c
-        )
-      )
+      setConvoList((prev) => {
+        const idx = prev.findIndex((c) => c.id === msg.conversation_id)
+        if (idx < 0) return prev
+        const row = {
+          ...prev[idx],
+          unreadCount: prev[idx].unreadCount + 1,
+          preview,
+          updated_at,
+        }
+        return [row, ...prev.filter((c) => c.id !== msg.conversation_id)]
+      })
+      return true
+    }
+
+    /** Welcome DMs and other outbound team messages — bump preview without unread badge. */
+    const bumpInboxOnTeamMessage = (payload: { new: Record<string, unknown> }): boolean => {
+      const msg = payload.new as {
+        conversation_id?: string
+        sender_id?: string
+        body?: string
+        created_at?: string
+      }
+      if (!msg.conversation_id || !msg.sender_id) return false
+      const conv = convoListRef.current.find((c) => c.id === msg.conversation_id)
+      if (!conv || msg.sender_id === conv.customer_id) return false
+
+      const preview = (msg.body ?? '').trim() || conv.preview
+      const updated_at = msg.created_at || new Date().toISOString()
+      setConvoList((prev) => {
+        const idx = prev.findIndex((c) => c.id === msg.conversation_id)
+        if (idx < 0) return prev
+        const row = {
+          ...prev[idx],
+          preview,
+          updated_at,
+        }
+        return [row, ...prev.filter((c) => c.id !== msg.conversation_id)]
+      })
       return true
     }
 
@@ -1386,16 +1405,117 @@ export default function DashboardPage() {
         const cached = convoListRef.current.find((c) => c.id === msg.conversation_id)
         if (cached) {
           if (msg.sender_id !== cached.customer_id) return
-        } else {
-          const { data } = await supabase
-            .from('conversations')
-            .select('business_id, customer_id')
-            .eq('id', msg.conversation_id)
-            .maybeSingle()
-          if (!data || data.business_id !== bid || msg.sender_id !== data.customer_id) return
+          bumpInboxOnCustomerMessage(payload)
+          return
         }
 
-        queueRefresh()
+        const { data: convo } = await supabase
+          .from('conversations')
+          .select('id, customer_id, updated_at, business_id')
+          .eq('id', msg.conversation_id)
+          .maybeSingle()
+        if (!convo || convo.business_id !== bid || convo.customer_id !== msg.sender_id) return
+
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id, first_name, last_name, username, avatar_url')
+          .eq('id', convo.customer_id as string)
+          .maybeSingle()
+
+        const pr = prof as {
+          first_name: string
+          last_name: string
+          username: string
+          avatar_url?: string | null
+        } | null
+        const customerName = pr
+          ? `${pr.first_name ?? ''} ${pr.last_name ?? ''}`.trim() || pr.username
+          : 'Customer'
+        const preview = (msg.body ?? '').trim() || 'No messages yet'
+        const updated_at = msg.created_at || (convo.updated_at as string) || new Date().toISOString()
+
+        setConvoList((prev) => {
+          if (prev.some((c) => c.id === convo.id)) return prev
+          return [
+            {
+              id: convo.id as string,
+              customer_id: convo.customer_id as string,
+              customerName,
+              customerUsername: pr?.username ?? '…',
+              customerAvatar: pr?.avatar_url ?? null,
+              preview,
+              updated_at,
+              unreadCount: 1,
+              labels: [],
+            },
+            ...prev,
+          ]
+        })
+      })()
+    }
+
+    const resolveOutboundTeamMessage = (payload: { new: Record<string, unknown> }) => {
+      void (async () => {
+        const msg = payload.new as {
+          conversation_id?: string
+          sender_id?: string
+          body?: string
+          created_at?: string
+        }
+        if (!msg.conversation_id || !msg.sender_id) return
+        const bid = profileRef.current?.business_id
+        if (!bid) return
+
+        const cached = convoListRef.current.find((c) => c.id === msg.conversation_id)
+        if (cached) {
+          if (msg.sender_id === cached.customer_id) return
+          bumpInboxOnTeamMessage(payload)
+          return
+        }
+
+        const { data: convo } = await supabase
+          .from('conversations')
+          .select('id, customer_id, updated_at, business_id')
+          .eq('id', msg.conversation_id)
+          .maybeSingle()
+        if (!convo || convo.business_id !== bid) return
+        if (msg.sender_id === convo.customer_id) return
+
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id, first_name, last_name, username, avatar_url')
+          .eq('id', convo.customer_id as string)
+          .maybeSingle()
+
+        const pr = prof as {
+          first_name: string
+          last_name: string
+          username: string
+          avatar_url?: string | null
+        } | null
+        const customerName = pr
+          ? `${pr.first_name ?? ''} ${pr.last_name ?? ''}`.trim() || pr.username
+          : 'Customer'
+        const preview = (msg.body ?? '').trim() || 'No messages yet'
+        const updated_at = msg.created_at || (convo.updated_at as string) || new Date().toISOString()
+
+        setConvoList((prev) => {
+          if (prev.some((c) => c.id === convo.id)) return prev
+          return [
+            {
+              id: convo.id as string,
+              customer_id: convo.customer_id as string,
+              customerName,
+              customerUsername: pr?.username ?? '…',
+              customerAvatar: pr?.avatar_url ?? null,
+              preview,
+              updated_at,
+              unreadCount: 0,
+              labels: [],
+            },
+            ...prev,
+          ]
+        })
       })()
     }
 
@@ -1409,8 +1529,10 @@ export default function DashboardPage() {
         { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload) => {
           const bumped = bumpInboxOnCustomerMessage(payload)
-          if (bumped) queueSlowRefresh()
-          else resolveInboundCustomerMessage(payload)
+          if (bumped) return
+          if (bumpInboxOnTeamMessage(payload)) return
+          resolveInboundCustomerMessage(payload)
+          resolveOutboundTeamMessage(payload)
         }
       )
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, queueRefresh)
@@ -1430,7 +1552,6 @@ export default function DashboardPage() {
 
     return () => {
       if (timer) window.clearTimeout(timer)
-      if (slowTimer) window.clearTimeout(slowTimer)
       void supabase.removeChannel(channel)
     }
   }, [supabase, refreshDashboard, profile?.business_id, profile?.id])
@@ -2754,6 +2875,34 @@ export default function DashboardPage() {
     }
   }
 
+  async function backfillWelcomeDms() {
+    if (profileRef.current?.business_role !== 'admin') return
+    setWelcomeBackfillBusy(true)
+    try {
+      const res = await fetch('/api/staff/backfill-welcome-dms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sinceHours: 72, limit: 200 }),
+      })
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string
+        sent?: number
+        skipped?: number
+        failed?: number
+        scanned?: number
+      }
+      if (!res.ok) throw new Error(j.error || 'Request failed')
+      await refreshInbox()
+      alert(
+        `Welcome DMs: ${j.sent ?? 0} sent, ${j.skipped ?? 0} already had one, ${j.failed ?? 0} failed (${j.scanned ?? 0} recent signups checked).`
+      )
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not send welcome DMs')
+    } finally {
+      setWelcomeBackfillBusy(false)
+    }
+  }
+
   async function reviewCustomer(userId: string, decision: 'approve' | 'reject' | 'block') {
     setReviewBusyId(userId)
     try {
@@ -2870,36 +3019,25 @@ export default function DashboardPage() {
       if (insErr) throw insErr
       const announcementId = (inserted as { id: string }).id
 
-      const { data: customers, error: custErr } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('role', 'customer')
-        .eq('account_status', 'approved')
-        .is('deleted_at', null)
-
+      const approvedIds = await listAllApprovedCustomerIds(supabase)
       let notificationsOk = true
-      if (custErr) {
-        console.error(custErr)
-        notificationsOk = false
-      } else {
-        notified = (customers || []).length
-        const preview = body.length > 120 ? `${body.slice(0, 117)}…` : body
-        const rows = (customers || []).map((row: { id: string }) => ({
-          user_id: row.id,
-          business_id: profile.business_id,
-          type: 'announcement',
-          title: `New post: ${title}`,
-          body: preview,
-          link: `/feed?post=${announcementId}`,
-        }))
-        const chunk = 150
-        for (let i = 0; i < rows.length; i += chunk) {
-          const { error: nErr } = await supabase.from('notifications').insert(rows.slice(i, i + chunk))
-          if (nErr) {
-            console.error(nErr)
-            notificationsOk = false
-            break
-          }
+      notified = approvedIds.length
+      const preview = body.length > 120 ? `${body.slice(0, 117)}…` : body
+      const rows = approvedIds.map((user_id) => ({
+        user_id,
+        business_id: profile.business_id,
+        type: 'announcement',
+        title: `New post: ${title}`,
+        body: preview,
+        link: `/feed?post=${announcementId}`,
+      }))
+      const chunk = 150
+      for (let i = 0; i < rows.length; i += chunk) {
+        const { error: nErr } = await supabase.from('notifications').insert(rows.slice(i, i + chunk))
+        if (nErr) {
+          console.error(nErr)
+          notificationsOk = false
+          break
         }
       }
 
@@ -2953,7 +3091,7 @@ export default function DashboardPage() {
       const recipientIds = new Set<string>()
 
       if (audience === 'all') {
-        for (const id of await listBusinessMemberIds(supabase, profile.business_id)) recipientIds.add(id)
+        for (const id of await listAllApprovedCustomerIds(supabase)) recipientIds.add(id)
       } else if (audience === 'one') {
         const raw = oneUserQuery.trim()
         if (!raw) {
@@ -3175,8 +3313,6 @@ export default function DashboardPage() {
     }
     return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
   }, [convoList, inboxSearchExtraConvos, inboxLabelFilterExtraConvos])
-
-  const inboxShowsRecentCap = convoList.length >= INBOX_THREAD_LIMIT
 
   /** Merge active-member profile data when inbox thread rows lack names (RLS gaps). */
   const convoListForInbox = useMemo(() => {
@@ -4178,12 +4314,25 @@ export default function DashboardPage() {
                     : inboxSearchQuery.trim() || inboxUnreadFilterOnly
                       ? `${inboxDisplayList.length} of ${convoListMerged.length} threads`
                       : `${convoListMerged.length} threads`}
-                  {inboxShowsRecentCap && !inboxSearchQuery.trim() && inboxThreadLabelFilterIds.length === 0 && !inboxUnreadFilterOnly
-                    ? ` · ${INBOX_THREAD_LIMIT} most recent`
-                    : ''}
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => void backfillWelcomeDms()}
+                    disabled={welcomeBackfillBusy || !profile.business_id}
+                    className="inline-flex items-center gap-2 rounded-[10px] border border-[#6f54ff]/35 bg-[#6f54ff]/10 px-3 py-2 text-[13px] font-semibold text-[#c4b5ff] hover:bg-[#6f54ff]/15 disabled:opacity-40 max-sm:px-2.5"
+                    title="Send missing welcome messages to customers approved in the last 72 hours"
+                  >
+                    {welcomeBackfillBusy ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="w-4 h-4" />
+                    )}
+                    <span className="max-sm:sr-only">Send missing welcomes</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => void refreshInbox()}
@@ -4295,16 +4444,11 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.08] lg:max-h-none pt-1 pb-0.5">
-                    {inboxShowsRecentCap && !inboxSearchQuery.trim() && inboxThreadLabelFilterIds.length === 0 && !inboxUnreadFilterOnly ? (
-                      <p className="px-3 py-2 text-[11px] text-[#8892b0] border-b border-white/[0.06]">
-                        Showing the {INBOX_THREAD_LIMIT} most recently active threads. Chats do not expire — search by
-                        name to find older conversations (e.g. Bayern).
-                      </p>
-                    ) : inboxUnreadFilterOnly ? (
+                    {inboxUnreadFilterOnly ? (
                       <p className="px-3 py-2 text-[11px] text-[#8892b0] border-b border-white/[0.06]">
                         {inboxDisplayList.length === 0
-                          ? 'No unread threads in the recent load.'
-                          : `${inboxDisplayList.length} unread thread${inboxDisplayList.length === 1 ? '' : 's'} in the recent load.`}{' '}
+                          ? 'No unread threads.'
+                          : `${inboxDisplayList.length} unread thread${inboxDisplayList.length === 1 ? '' : 's'}.`}{' '}
                         Search by name to find older unread conversations, or{' '}
                         <button
                           type="button"
@@ -4345,8 +4489,8 @@ export default function DashboardPage() {
                         <p className="text-center text-[13px] text-[#7d86a8]">
                           {convoListMerged.length === 0
                             ? 'No threads.'
-                            : inboxShowsRecentCap && inboxSearchQuery.trim()
-                              ? 'No match in recent threads — check below for older threads or members.'
+                            : inboxSearchQuery.trim()
+                              ? 'No match in loaded threads — check below for members without a thread yet.'
                               : 'No threads match your search or label filters.'}
                         </p>
                         {inboxSearchMemberMatches.length > 0 ? (
@@ -5605,12 +5749,12 @@ export default function DashboardPage() {
               {audience === 'selected' ? (
                 <div className="rounded-xl border border-white/10 bg-[#111a31] p-2 space-y-2">
                   <p className="text-[11px] text-[#8892b0] px-1.5">
-                    Same people as <strong className="text-[#c4cbe6]">Users → Active</strong>: approved customers who follow you or have a support
-                    thread. Tap rows to toggle, or use Select all / Clear.
+                    Same people as <strong className="text-[#c4cbe6]">Users → Active</strong>: all approved customers.
+                    Tap rows to toggle, or use Select all / Clear.
                   </p>
                   {selectableRecipients.length === 0 ? (
                     <p className="text-xs text-[#7d86a8] px-2 py-3">
-                      No selectable members yet. Members appear after they follow your business or open a support thread.
+                      No approved customers yet.
                     </p>
                   ) : (
                     <>
