@@ -2,11 +2,11 @@
  * One-time: create auth user + business admin profile for Relay dashboard.
  *
  * Usage (from project root, with SUPABASE_SERVICE_ROLE_KEY in .env.local):
- *   node scripts/seed-admin.mjs vaticanbros@gmail.com "your-password-here"
+ *   node scripts/seed-admin.mjs admin@relaycoms.com "your-password" relaycoms
  *
- * Or set env: SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD (and optional SEED_BUSINESS_SLUG, SEED_BUSINESS_NAME)
- *
- * No SQL file required — this uses the Auth Admin API.
+ * Args: <email> <password> [username]
+ * Env:  SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, SEED_ADMIN_USERNAME (optional)
+ *       SEED_BUSINESS_SLUG, SEED_BUSINESS_NAME
  */
 import { createClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
@@ -27,22 +27,36 @@ function loadEnvLocal() {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1)
     }
-    if (process.env[key] === undefined) process.env[key] = val
+    // Always trust .env.local for Supabase keys (stale shell env caused wrong-project seeds).
+    const force = key === 'NEXT_PUBLIC_SUPABASE_URL' || key === 'SUPABASE_SERVICE_ROLE_KEY'
+    if (force || process.env[key] === undefined) process.env[key] = val
   }
 }
+
+function normalizeUsername(raw) {
+  const s = String(raw || '')
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')
+  return s.slice(0, 26) || 'admin'
+}
+
+delete process.env.NEXT_PUBLIC_SUPABASE_URL
+delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+delete process.env.SUPABASE_SERVICE_ROLE_KEY
 
 loadEnvLocal()
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-const email =
-  process.argv[2] || process.env.SEED_ADMIN_EMAIL
-const password =
-  process.argv[3] || process.env.SEED_ADMIN_PASSWORD
+const email = process.argv[2] || process.env.SEED_ADMIN_EMAIL
+const password = process.argv[3] || process.env.SEED_ADMIN_PASSWORD
+const requestedUsername = process.argv[4] || process.env.SEED_ADMIN_USERNAME
 
-const businessSlug = process.env.SEED_BUSINESS_SLUG || 'vatican-bros'
-const businessName = process.env.SEED_BUSINESS_NAME || 'Vatican Bros'
+const businessSlug = process.env.SEED_BUSINESS_SLUG || 'relaycoms'
+const businessName = process.env.SEED_BUSINESS_NAME || 'Relaycoms'
 
 if (!url || !serviceKey?.trim()) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY (.env.local).')
@@ -50,8 +64,8 @@ if (!url || !serviceKey?.trim()) {
 }
 
 if (!email || !password) {
-  console.error('Usage: node scripts/seed-admin.mjs <email> <password>')
-  console.error('   or: SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... node scripts/seed-admin.mjs')
+  console.error('Usage: node scripts/seed-admin.mjs <email> <password> [username]')
+  console.error('   or: SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... SEED_ADMIN_USERNAME=... node scripts/seed-admin.mjs')
   process.exit(1)
 }
 
@@ -59,14 +73,43 @@ const admin = createClient(url, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 })
 
-async function pickUsername(base) {
+async function isUsernameAvailable(username, exceptUserId) {
+  const { data } = await admin.from('profiles').select('id').eq('username', username).maybeSingle()
+  if (!data) return true
+  return data.id === exceptUserId
+}
+
+async function pickUsername(base, exceptUserId) {
   let u = base.slice(0, 26) || 'admin'
   for (let i = 0; i < 20; i++) {
-    const { data } = await admin.from('profiles').select('id').eq('username', u).maybeSingle()
-    if (!data) return u
+    if (await isUsernameAvailable(u, exceptUserId)) return u
     u = `${base.slice(0, 20)}_${i}`
   }
   return `${base.slice(0, 10)}_${randomUUID().slice(0, 8)}`
+}
+
+async function resolveUsername(userId, emailLocalPart) {
+  if (requestedUsername) {
+    const username = normalizeUsername(requestedUsername)
+    if (!(await isUsernameAvailable(username, userId))) {
+      console.error(`Username @${username} is already taken by another account.`)
+      process.exit(1)
+    }
+    return username
+  }
+
+  const { data: existing } = await admin
+    .from('profiles')
+    .select('username')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (existing?.username) {
+    return existing.username
+  }
+
+  const baseUser = emailLocalPart.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'admin'
+  return pickUsername(baseUser, userId)
 }
 
 async function main() {
@@ -126,14 +169,14 @@ async function main() {
   }
 
   const businessId = biz.id
-  const baseUser = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || 'admin'
-  const username = await pickUsername(baseUser)
+  const emailLocal = email.split('@')[0]
+  const username = await resolveUsername(userId, emailLocal)
 
   const row = {
     id: userId,
     username,
-    first_name: 'Vatican',
-    last_name: 'Bros',
+    first_name: 'Relay',
+    last_name: 'Admin',
     phone: null,
     role: 'business',
     business_id: businessId,

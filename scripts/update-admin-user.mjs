@@ -36,18 +36,17 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 const password = process.argv[2]
-const userId = process.argv[3] || '5f6a22b8-88ee-4d77-867f-b82ee35b462b'
-const email = (process.argv[4] || 'juwabros@gmail.com').trim().toLowerCase()
-const username = (process.argv[5] || 'juwabros').replace(/^@/, '')
+const userId = process.argv[3]
+const email = process.argv[4]?.trim().toLowerCase()
+const username = process.argv[5]?.replace(/^@/, '')
 
 if (!url || !serviceKey?.trim()) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local')
   process.exit(1)
 }
 
-if (!password) {
-  console.error('Usage: node scripts/update-admin-user.mjs "YOUR_NEW_PASSWORD"')
-  console.error('       node scripts/update-admin-user.mjs "password" <user-uuid> <email> <username>')
+if (!password || !userId || !email || !username) {
+  console.error('Usage: node scripts/update-admin-user.mjs "password" <user-uuid> <email> <username>')
   process.exit(1)
 }
 

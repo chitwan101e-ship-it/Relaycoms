@@ -31,13 +31,13 @@ export function pickPrimaryBusinessFromList(list: BusinessRow[]): { id: string; 
     if (fromEnv) return { id: fromEnv.id, name: fromEnv.name }
   }
 
-  const slugHints = ['juwa-bros', 'juwabros', 'jbcoms', 'support', 'relay', 'admin', 'help']
+  const slugHints = ['relaycoms', 'relay', 'support', 'admin', 'help']
   for (const s of slugHints) {
     const hit = list.find((b) => b.slug.toLowerCase().replace(/_/g, '-') === s)
     if (hit) return { id: hit.id, name: hit.name }
   }
 
-  const byName = list.find((b) => /juwa|support|helpdesk|help\s*desk|relay\s*support/i.test(b.name))
+  const byName = list.find((b) => /relaycoms|support|helpdesk|help\s*desk|relay\s*support/i.test(b.name))
   if (byName) return { id: byName.id, name: byName.name }
 
   const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name))
@@ -77,12 +77,12 @@ export async function resolveBusinessAdminStaffId(
   return (data?.id as string | undefined) ?? null
 }
 
-/** Prefer @juwabros brand account, then business admin, then any staff (matches working welcome threads). */
+/** Prefer @relaycoms brand account, then business admin, then any staff. */
 export async function resolveBusinessStaffSenderId(
   admin: SupabaseClient,
   businessId: string
 ): Promise<string | null> {
-  const brandUsernames = ['juwabros', 'juwa-bros']
+  const brandUsernames = ['relaycoms', 'relay-admin']
   for (const uname of brandUsernames) {
     const { data: brand } = await admin
       .from('profiles')
