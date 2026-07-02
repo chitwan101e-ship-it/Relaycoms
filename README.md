@@ -60,8 +60,10 @@ src/
 │   └── server.ts                    # Server client + service-role client
 ├── middleware.ts                    # Subdomain routing + session refresh
 └── types/database.ts                # Full TypeScript types for DB
+schema.sql                           # Full DB schema + RLS (run once in Supabase SQL Editor)
 supabase/
-└── schema.sql                       # Full DB schema + RLS policies
+├── migrations/                      # Incremental history (superseded by schema.sql for fresh DBs)
+└── schema.sql                       # Pointer to ../schema.sql
 ```
 
 ---
@@ -80,11 +82,8 @@ npm install
 
 1. Go to [supabase.com](https://supabase.com) → New project
 2. Open **Database → SQL Editor**
-3. Paste & run the entire contents of `supabase/schema.sql`
-4. In **Database → Replication**, enable Realtime for:
-   - `messages`
-   - `conversations`
-   - `announcements`
+3. Paste & run the entire contents of `schema.sql`
+4. Optional: in **Database → Replication**, also enable Realtime for `conversations` and `announcements` (`messages` and `notifications` are added by `schema.sql`)
 
 ### 3. Create a Resend account
 
@@ -194,4 +193,4 @@ messages          — real-time messages within a conversation
 follows           — customer follows a business
 ```
 
-All tables have Row Level Security (RLS) enabled. See `supabase/schema.sql` for full policy definitions.
+All tables have Row Level Security (RLS) enabled. See `schema.sql` for full policy definitions.

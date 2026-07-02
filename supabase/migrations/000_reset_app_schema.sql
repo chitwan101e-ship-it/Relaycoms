@@ -5,7 +5,7 @@
 --   ERROR: type "user_role" already exists
 --
 -- Does NOT touch auth.users. Deletes app data in public + related helpers.
--- After this, run: schema.sql then migrations 002 → 003 → 004 → 005_suspension_patch_for_existing_db.sql (in order).
+-- After this, run schema.sql only (repo root; do not run individual migrations 002+).
 -- ============================================================
 
 -- From migration 005
