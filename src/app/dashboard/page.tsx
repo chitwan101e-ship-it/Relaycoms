@@ -3500,8 +3500,8 @@ export default function DashboardPage() {
 
   if (loading || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
@@ -3518,7 +3518,7 @@ export default function DashboardPage() {
   const headerSub = headerSubParts.join(' · ')
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden text-[14px] leading-snug text-white antialiased bg-[radial-gradient(ellipse_at_top_left,_#0f1840_0%,_#070a18_45%,_#050814_100%)] lg:grid lg:grid-cols-[220px_1fr]">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden text-[14px] leading-snug text-white antialiased bg-[radial-gradient(ellipse_at_top_left,_#0f1840_0%,_#041210_45%,_#041210_100%)] lg:grid lg:grid-cols-[220px_1fr]">
       <aside className="hidden lg:flex lg:h-full lg:min-h-0 flex-col border-r border-white/[0.08] bg-[rgba(8,13,28,0.95)] py-3 px-2.5 gap-0.5 overflow-hidden">
         <div className="admin-sidebar-top px-2 pb-3">
           <p className="text-[9px] font-bold uppercase tracking-[0.22em] text-[#4e5a7a] mb-2">Staff Portal</p>
@@ -3588,7 +3588,7 @@ export default function DashboardPage() {
                 <Icon className="w-[15px] h-[15px] shrink-0 opacity-90" />
                 <span className="flex-1 min-w-0">{item.label}</span>
                 {item.id === 'inbox' && inboxUnreadTotal > 0 ? (
-                  <span className="shrink-0 min-w-4 h-4 px-1 rounded-full bg-[#8d63ff] text-white text-[9px] font-bold flex items-center justify-center tabular-nums">
+                  <span className="shrink-0 min-w-4 h-4 px-1 rounded-full bg-[#14b8a6] text-white text-[9px] font-bold flex items-center justify-center tabular-nums">
                     {inboxUnreadTotal > 99 ? '99+' : inboxUnreadTotal}
                   </span>
                 ) : null}
@@ -3755,7 +3755,7 @@ export default function DashboardPage() {
                           )}
                         </div>
                         {item.unreadCount > 0 ? (
-                          <span className="absolute -top-1 -right-1 z-10 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#050814]">
+                          <span className="absolute -top-1 -right-1 z-10 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#041210]">
                             {item.unreadCount > 9 ? '9+' : item.unreadCount}
                           </span>
                         ) : null}
@@ -3799,7 +3799,7 @@ export default function DashboardPage() {
             <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-3 space-y-3">
               <input type="file" ref={postFileInputRef} accept="image/*" className="hidden" onChange={onPostImagePick} />
               <div className="flex items-start gap-3">
-                <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#8d63ff] to-[#5a7ff6] flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#14b8a6] to-[#0891b2] flex items-center justify-center shrink-0 mt-0.5">
                   <User2 className="w-5 h-5 text-white" />
                 </div>
                 <div className="flex-1 min-w-0 space-y-1">
@@ -3842,7 +3842,7 @@ export default function DashboardPage() {
                   onClick={() => postFileInputRef.current?.click()}
                   className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold text-[#aeb7d6] hover:text-white hover:bg-white/5 transition-colors"
                 >
-                  <ImagePlus className="w-4 h-4 text-[#8d63ff]" />
+                  <ImagePlus className="w-4 h-4 text-[#14b8a6]" />
                   Photo
                 </button>
               </div>
@@ -3850,7 +3850,7 @@ export default function DashboardPage() {
                 type="button"
                 disabled={postBusy || (!postTitle.trim() && !postBody.trim() && !postImage)}
                 onClick={() => void publishAnnouncement()}
-                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#0891b2] disabled:opacity-40"
               >
                 {postBusy ? 'Publishing…' : 'Publish to feed & notify customers'}
               </button>
@@ -3860,7 +3860,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between gap-2 mb-3">
                 <h4 className="text-lg font-semibold text-white">Your posts</h4>
                 {myAnnouncementsLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-[#8d63ff]" />
+                  <Loader2 className="w-4 h-4 animate-spin text-[#14b8a6]" />
                 ) : (
                   <span className="text-xs text-[#7d86a8]">{myAnnouncements.length} shown</span>
                 )}
@@ -3922,7 +3922,7 @@ export default function DashboardPage() {
                                   type="button"
                                   disabled={editPostBusy || !editPostTitle.trim() || !editPostBody.trim()}
                                   onClick={() => void saveEditPost()}
-                                  className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] px-3 py-2 text-xs font-semibold disabled:opacity-40"
+                                  className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#0891b2] px-3 py-2 text-xs font-semibold disabled:opacity-40"
                                 >
                                   {editPostBusy ? 'Saving…' : 'Save'}
                                 </button>
@@ -3964,7 +3964,7 @@ export default function DashboardPage() {
                             }
                             className="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 -mx-1.5 text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                           >
-                            <ThumbsUp className="w-4 h-4 text-[#8d63ff]" />
+                            <ThumbsUp className="w-4 h-4 text-[#14b8a6]" />
                             {meta.likes} likes
                           </button>
                           <button
@@ -3986,11 +3986,11 @@ export default function DashboardPage() {
                             }}
                             className={`inline-flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 -mx-1.5 cursor-pointer transition-colors ${
                               engagementOpen?.postId === a.id && engagementOpen.mode === 'comments'
-                                ? 'text-white bg-[#8d63ff]/15'
+                                ? 'text-white bg-[#14b8a6]/15'
                                 : 'text-[#c4cbe6] hover:text-white hover:bg-white/[0.06]'
                             }`}
                           >
-                            <RelayChatBubbleIcon className="text-[#8d63ff]" size={16} strokeWidth={2} />
+                            <RelayChatBubbleIcon className="text-[#14b8a6]" size={16} strokeWidth={2} />
                             {meta.comments} comments
                           </button>
                           <button
@@ -3998,7 +3998,7 @@ export default function DashboardPage() {
                             onClick={() => void shareStaffAnnouncement(a)}
                             className="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 -mx-1.5 text-[#c4cbe6] hover:text-white hover:bg-white/[0.06] transition-colors ml-auto"
                           >
-                            <Share2 className="w-4 h-4 text-[#8d63ff]" />
+                            <Share2 className="w-4 h-4 text-[#14b8a6]" />
                             Share link
                           </button>
                         </div>
@@ -4088,7 +4088,7 @@ export default function DashboardPage() {
                                                         type="button"
                                                         disabled={commentModerationBusyId === c.id || !editCommentBody.trim()}
                                                         onClick={() => void saveEditComment()}
-                                                        className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] px-2.5 py-1.5 text-xs font-semibold disabled:opacity-40"
+                                                        className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#0891b2] px-2.5 py-1.5 text-xs font-semibold disabled:opacity-40"
                                                       >
                                                         Save
                                                       </button>
@@ -4117,7 +4117,7 @@ export default function DashboardPage() {
                                                     )
                                                     setStaffReplyThreadDraft('')
                                                   }}
-                                                  className="text-[11px] font-semibold text-[#8d63ff]"
+                                                  className="text-[11px] font-semibold text-[#14b8a6]"
                                                 >
                                                   Reply
                                                 </button>
@@ -4131,7 +4131,7 @@ export default function DashboardPage() {
                                                       className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0"
                                                     />
                                                   ) : (
-                                                    <div className="w-8 h-8 rounded-full bg-[#8d63ff] text-xs font-bold text-white flex items-center justify-center shrink-0">
+                                                    <div className="w-8 h-8 rounded-full bg-[#14b8a6] text-xs font-bold text-white flex items-center justify-center shrink-0">
                                                       {(profile?.username || 'JB').slice(0, 2).toUpperCase()}
                                                     </div>
                                                   )}
@@ -4156,7 +4156,7 @@ export default function DashboardPage() {
                                                         staffReplyBusyPostId === a.id || !staffReplyThreadDraft.trim()
                                                       }
                                                       onClick={() => void submitStaffCommentReply(a.id, c.id)}
-                                                      className="p-2 rounded-full text-white shrink-0 disabled:opacity-50 bg-[#8d63ff]"
+                                                      className="p-2 rounded-full text-white shrink-0 disabled:opacity-50 bg-[#14b8a6]"
                                                       aria-label="Send reply"
                                                     >
                                                       {staffReplyBusyPostId === a.id ? (
@@ -4192,7 +4192,7 @@ export default function DashboardPage() {
                                         className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0"
                                       />
                                     ) : (
-                                      <div className="w-8 h-8 rounded-full bg-[#8d63ff] text-xs font-bold text-white flex items-center justify-center shrink-0">
+                                      <div className="w-8 h-8 rounded-full bg-[#14b8a6] text-xs font-bold text-white flex items-center justify-center shrink-0">
                                         {(profile?.username || 'JB').slice(0, 2).toUpperCase()}
                                       </div>
                                     )}
@@ -4219,7 +4219,7 @@ export default function DashboardPage() {
                                           staffReplyBusyPostId === a.id || !(staffCommentDrafts[a.id] || '').trim()
                                         }
                                         onClick={() => void submitStaffComment(a.id)}
-                                        className="p-2 rounded-full text-white shrink-0 disabled:opacity-50 bg-[#8d63ff]"
+                                        className="p-2 rounded-full text-white shrink-0 disabled:opacity-50 bg-[#14b8a6]"
                                         aria-label="Send comment"
                                       >
                                         {staffReplyBusyPostId === a.id ? (
@@ -4253,7 +4253,7 @@ export default function DashboardPage() {
             >
               <div className="flex items-center gap-2 min-h-[34px]">
                 {inboxUnreadTotal > 0 ? (
-                  <span className="text-[10px] font-bold text-[#8d63ff] bg-[rgba(141,99,255,0.2)] border border-[rgba(141,99,255,0.35)] rounded-md px-1.5 py-px tabular-nums">
+                  <span className="text-[10px] font-bold text-[#14b8a6] bg-[rgba(141,99,255,0.2)] border border-[rgba(141,99,255,0.35)] rounded-md px-1.5 py-px tabular-nums">
                     {inboxUnreadTotal} new
                   </span>
                 ) : null}
@@ -4359,7 +4359,7 @@ export default function DashboardPage() {
                         onClick={clearInboxThreadFilters}
                         className={`inline-flex shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
                           inboxThreadLabelFilterIds.length === 0 && !inboxUnreadFilterOnly
-                            ? 'border-[#8d63ff]/50 bg-[rgba(141,99,255,0.15)] text-[#c4b8ff] ring-1 ring-[#8d63ff]/50'
+                            ? 'border-[#14b8a6]/50 bg-[rgba(141,99,255,0.15)] text-[#c4b8ff] ring-1 ring-[#14b8a6]/50'
                             : 'border-white/[0.12] bg-white/[0.04] text-[#9ea8cc] opacity-90 hover:opacity-100 hover:text-white'
                         }`}
                       >
@@ -4383,7 +4383,7 @@ export default function DashboardPage() {
                             type="button"
                             onClick={() => selectInboxThreadLabelFilter(lbl.id)}
                             className={`inline-flex shrink-0 max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                              on ? 'ring-1 ring-[#8d63ff]/50' : 'opacity-80 hover:opacity-100'
+                              on ? 'ring-1 ring-[#14b8a6]/50' : 'opacity-80 hover:opacity-100'
                             }`}
                             style={inboxLabelChipStyle(lbl.color)}
                           >
@@ -4404,7 +4404,7 @@ export default function DashboardPage() {
                         <button
                           type="button"
                           onClick={clearInboxThreadFilters}
-                          className="font-semibold text-[#8d63ff] hover:underline"
+                          className="font-semibold text-[#14b8a6] hover:underline"
                         >
                           view all threads
                         </button>
@@ -4423,7 +4423,7 @@ export default function DashboardPage() {
                             <button
                               type="button"
                               onClick={clearInboxThreadFilters}
-                              className="font-semibold text-[#8d63ff] hover:underline"
+                              className="font-semibold text-[#14b8a6] hover:underline"
                             >
                               view all threads
                             </button>
@@ -4498,7 +4498,7 @@ export default function DashboardPage() {
                               )}
                             </div>
                             {item.unreadCount > 0 ? (
-                              <span className="absolute -top-1 -right-1 z-10 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#050814]">
+                              <span className="absolute -top-1 -right-1 z-10 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#ff3b5c] text-white text-[8px] font-bold flex items-center justify-center leading-none tabular-nums border-2 border-[#041210]">
                                 {item.unreadCount > 9 ? '9+' : item.unreadCount}
                               </span>
                             ) : null}
@@ -4772,7 +4772,7 @@ export default function DashboardPage() {
                       >
                         {threadLoading ? (
                           <div className="flex justify-center py-12">
-                            <Loader2 className="w-6 h-6 animate-spin text-[#8d63ff]" />
+                            <Loader2 className="w-6 h-6 animate-spin text-[#14b8a6]" />
                           </div>
                         ) : threadMessages.length === 0 ? (
                           <p className="text-sm text-[#7d86a8] py-6 text-center">No messages yet. Say hello below.</p>
@@ -4887,7 +4887,7 @@ export default function DashboardPage() {
                                     <button
                                       type="button"
                                       onClick={() => setReplyTarget(m)}
-                                      className="font-semibold text-[#8d63ff] hover:text-[#a78bff] hover:underline"
+                                      className="font-semibold text-[#14b8a6] hover:text-[#a78bff] hover:underline"
                                     >
                                       Reply
                                     </button>
@@ -5032,7 +5032,7 @@ export default function DashboardPage() {
                                             type="button"
                                             disabled={replyBusy}
                                             onClick={() => insertCannedReplyIntoDraft(r)}
-                                            className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+                                            className="rounded-lg bg-gradient-to-r from-[#6f54ff] to-[#0891b2] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
                                           >
                                             Insert
                                           </button>
@@ -5119,7 +5119,7 @@ export default function DashboardPage() {
                             type="button"
                             disabled={replyBusy || (!replyDraft.trim() && !replyPendingImage)}
                             onClick={() => void sendReply()}
-                            className="shrink-0 rounded-xl px-3.5 py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                            className="shrink-0 rounded-xl px-3.5 py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#0891b2] disabled:opacity-40"
                           >
                             Send
                           </button>
@@ -5167,7 +5167,7 @@ export default function DashboardPage() {
                     setActiveMemberQuery('')
                   }}
                   className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
-                    usersPanelTab === 'pending' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                    usersPanelTab === 'pending' ? 'bg-[rgba(141,99,255,0.15)] text-[#14b8a6]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
                   }`}
                 >
                   Pending ({pendingCustomers.length})
@@ -5176,7 +5176,7 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setUsersPanelTab('active')}
                   className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
-                    usersPanelTab === 'active' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                    usersPanelTab === 'active' ? 'bg-[rgba(141,99,255,0.15)] text-[#14b8a6]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
                   }`}
                 >
                   Active ({activeMembers.length})
@@ -5188,7 +5188,7 @@ export default function DashboardPage() {
                     setActiveMemberQuery('')
                   }}
                   className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors ${
-                    usersPanelTab === 'suspended' ? 'bg-[rgba(141,99,255,0.15)] text-[#8d63ff]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
+                    usersPanelTab === 'suspended' ? 'bg-[rgba(141,99,255,0.15)] text-[#14b8a6]' : 'text-[#8892b0] hover:text-[#c4cbe6]'
                   }`}
                 >
                   Suspended ({suspendedMembers.length})
@@ -5432,7 +5432,7 @@ export default function DashboardPage() {
                                   type="button"
                                   disabled={memberSending || !memberDraft.trim()}
                                   onClick={() => void sendMessageToActiveMember(m.id)}
-                                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold bg-gradient-to-r from-[#6f54ff] to-[#0891b2] disabled:opacity-40"
                                 >
                                   {memberSending ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -5566,7 +5566,7 @@ export default function DashboardPage() {
                 type="button"
                 disabled={createStaffBusy}
                 onClick={() => void createSupportStaff()}
-                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40 flex items-center justify-center gap-2"
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#0891b2] disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {createStaffBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 {createStaffBusy ? 'Creating…' : 'Create staff account'}
@@ -5577,7 +5577,7 @@ export default function DashboardPage() {
             <div className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] overflow-hidden">
               <div className="px-3 py-2 border-b border-white/[0.08] flex items-center justify-between gap-2">
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8892b0]">Team roster</h3>
-                {teamLoadBusy ? <Loader2 className="w-4 h-4 animate-spin text-[#8d63ff]" /> : null}
+                {teamLoadBusy ? <Loader2 className="w-4 h-4 animate-spin text-[#14b8a6]" /> : null}
               </div>
               <div className="divide-y divide-white/[0.08]">
                 {teamRows.length === 0 && !teamLoadBusy ? (
@@ -5826,7 +5826,7 @@ export default function DashboardPage() {
                   (audience === 'labels' && notifyAudienceLabelIds.length === 0)
                 }
                 onClick={() => void sendMemberNotifications()}
-                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#5a7ff6] disabled:opacity-40"
+                className="w-full rounded-xl py-2.5 font-semibold bg-gradient-to-r from-[#6f54ff] to-[#0891b2] disabled:opacity-40"
               >
                 {notifyBusy ? 'Sending…' : 'Send'}
               </button>
@@ -5891,7 +5891,7 @@ export default function DashboardPage() {
                 setActiveTab(item.id)
               }}
               className={`flex flex-col items-center gap-0.5 py-1.5 min-w-0 relative ${
-                active ? 'text-[#8d63ff]' : 'text-[#8892b0]'
+                active ? 'text-[#14b8a6]' : 'text-[#8892b0]'
               }`}
             >
               <span className="relative inline-flex shrink-0">
@@ -5926,7 +5926,7 @@ function StatCard({
     accent === 'yellow'
       ? 'bg-[rgba(246,179,50,0.1)] text-[#f6b332]'
       : accent === 'purple'
-        ? 'bg-[rgba(141,99,255,0.1)] text-[#8d63ff]'
+        ? 'bg-[rgba(141,99,255,0.1)] text-[#14b8a6]'
         : accent === 'red'
           ? 'bg-[rgba(255,59,92,0.1)] text-[#ff3b5c]'
           : 'bg-[rgba(47,209,127,0.1)] text-[#2fd17f]'
@@ -5958,10 +5958,10 @@ function QuickButton({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] px-3 py-2.5 flex items-center justify-center gap-2 text-[12px] font-semibold text-[#c4cbe6] hover:text-white hover:border-[rgba(141,99,255,0.3)] hover:bg-[rgba(141,99,255,0.06)] transition-all relative [&_svg]:text-[#8d63ff] [&_svg]:w-[15px] [&_svg]:h-[15px]"
+      className="rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] px-3 py-2.5 flex items-center justify-center gap-2 text-[12px] font-semibold text-[#c4cbe6] hover:text-white hover:border-[rgba(141,99,255,0.3)] hover:bg-[rgba(141,99,255,0.06)] transition-all relative [&_svg]:text-[#14b8a6] [&_svg]:w-[15px] [&_svg]:h-[15px]"
     >
       {typeof badgeCount === 'number' && badgeCount > 0 ? (
-        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#8d63ff] text-white text-[9px] font-bold flex items-center justify-center tabular-nums border-2 border-[#050814]">
+        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#14b8a6] text-white text-[9px] font-bold flex items-center justify-center tabular-nums border-2 border-[#041210]">
           {badgeCount > 99 ? '99+' : badgeCount}
         </span>
       ) : null}

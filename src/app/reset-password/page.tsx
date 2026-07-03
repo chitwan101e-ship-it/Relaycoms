@@ -9,7 +9,7 @@ import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile'
 
 const inp =
-  'w-full px-3 py-2.5 border border-white/10 bg-[#11172a] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#7c5af6] focus:ring-4 focus:ring-[#7c5af6]/20 focus:outline-none transition-all'
+  'w-full px-3 py-2.5 border border-white/10 bg-[#0f1f1d] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/20 focus:outline-none transition-all'
 
 function ResetPasswordInner() {
   const router = useRouter()
@@ -128,9 +128,9 @@ function ResetPasswordInner() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050814] flex flex-col">
+    <div className="min-h-screen bg-[#041210] flex flex-col">
       <main className="flex-1 flex items-center justify-center p-4">
-        <div className="bg-[#0b1020]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
+        <div className="bg-[#0a1614]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
           <div className="text-center mb-6">
             <RelayLogo size="lg" className="justify-center mb-2" />
             <h1 className="text-xl font-bold text-white">Reset password</h1>
@@ -145,7 +145,7 @@ function ResetPasswordInner() {
             <button
               type="button"
               onClick={back}
-              className="flex items-center gap-1 text-sm text-[#8d63ff] hover:underline mb-4"
+              className="flex items-center gap-1 text-sm text-[#14b8a6] hover:underline mb-4"
             >
               <ArrowLeft className="w-4 h-4" />
               Change email or username
@@ -189,7 +189,7 @@ function ResetPasswordInner() {
                 type="button"
                 onClick={() => void sendCode()}
                 disabled={loading}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -262,7 +262,7 @@ function ResetPasswordInner() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -277,7 +277,7 @@ function ResetPasswordInner() {
           )}
 
           <p className="text-center mt-8 text-sm text-[#7f8bad]">
-            <Link href="/login" className="text-[#8d63ff] hover:underline">
+            <Link href="/login" className="text-[#14b8a6] hover:underline">
               Back to sign in
             </Link>
           </p>
@@ -290,8 +290,8 @@ function ResetPasswordInner() {
 export default function ResetPasswordPage() {
   const fallback = useMemo(
     () => (
-      <div className="min-h-screen bg-[#050814] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-[#7c5af6] animate-spin" />
+      <div className="min-h-screen bg-[#041210] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-[#0d9488] animate-spin" />
       </div>
     ),
     []

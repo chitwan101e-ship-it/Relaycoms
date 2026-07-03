@@ -139,7 +139,7 @@ export default function PublicBusinessPage() {
 
   if (!slug) {
     return (
-      <div className="min-h-screen bg-[#050814] text-white flex items-center justify-center">
+      <div className="min-h-screen bg-[#041210] text-white flex items-center justify-center">
         <p className="text-[#7f8bad]">Invalid link.</p>
       </div>
     )
@@ -147,18 +147,18 @@ export default function PublicBusinessPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
 
   if (error || !biz) {
     return (
-      <div className="min-h-screen bg-[#050814] text-white px-4 py-10">
+      <div className="min-h-screen bg-[#041210] text-white px-4 py-10">
         <div className="max-w-lg mx-auto text-center">
           <p className="text-[#f87171] mb-4">{error || 'Not found.'}</p>
-          <Link href="/feed" className="text-[#8d63ff] hover:underline">
+          <Link href="/feed" className="text-[#14b8a6] hover:underline">
             Back to feed
           </Link>
         </div>
@@ -167,8 +167,8 @@ export default function PublicBusinessPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#070a18_42%,_#050814_100%)] text-white">
-      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#041210_42%,_#041210_100%)] text-white">
+      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0a1614]/90 backdrop-blur-xl">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
             type="button"
@@ -179,7 +179,7 @@ export default function PublicBusinessPage() {
             <ArrowLeft className="w-5 h-5 text-[#b8c0dc]" />
           </button>
           <RelayLogo theme="dark" size="sm" showWordmark={false} />
-          <Link href="/feed" className="ml-auto text-sm font-semibold text-[#8d63ff] hover:underline">
+          <Link href="/feed" className="ml-auto text-sm font-semibold text-[#14b8a6] hover:underline">
             Open app
           </Link>
         </div>
@@ -190,7 +190,7 @@ export default function PublicBusinessPage() {
           <div
             className={clsx(
               'w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 border border-white/10',
-              biz.logo_url ? 'p-0 overflow-hidden bg-black/20' : 'bg-gradient-to-br from-[#7c5af6] to-[#3d5cff]'
+              biz.logo_url ? 'p-0 overflow-hidden bg-black/20' : 'bg-gradient-to-br from-[#0d9488] to-[#3d5cff]'
             )}
           >
             {biz.logo_url ? (
@@ -202,7 +202,7 @@ export default function PublicBusinessPage() {
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="text-3xl font-extrabold tracking-tight">{biz.name}</h1>
-            <p className="text-[#8d63ff] text-sm mt-1">@{biz.slug}</p>
+            <p className="text-[#14b8a6] text-sm mt-1">@{biz.slug}</p>
             {biz.description ? <p className="text-[#b8c0dc] mt-3 leading-relaxed">{biz.description}</p> : null}
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -215,7 +215,7 @@ export default function PublicBusinessPage() {
                     'inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors',
                     following
                       ? 'bg-white/10 text-white border border-white/20 hover:bg-white/15'
-                      : 'bg-[#8d63ff] text-white hover:bg-[#7a4fe6]'
+                      : 'bg-[#14b8a6] text-white hover:bg-[#7a4fe6]'
                   )}
                 >
                   {followBusy ? (
@@ -233,7 +233,7 @@ export default function PublicBusinessPage() {
               ) : (
                 <Link
                   href="/signup"
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm bg-[#8d63ff] text-white hover:bg-[#7a4fe6]"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm bg-[#14b8a6] text-white hover:bg-[#7a4fe6]"
                 >
                   <UserPlus className="w-4 h-4" /> Sign up to follow
                 </Link>

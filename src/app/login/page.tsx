@@ -9,7 +9,7 @@ import RelayLogo from '@/components/RelayLogo'
 import { Loader2, Eye, EyeOff } from 'lucide-react'
 
 const inp =
-  'w-full px-3 py-2.5 border border-white/10 bg-[#11172a] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#7c5af6] focus:ring-4 focus:ring-[#7c5af6]/20 focus:outline-none transition-all'
+  'w-full px-3 py-2.5 border border-white/10 bg-[#0f1f1d] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/20 focus:outline-none transition-all'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -80,9 +80,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050814] flex flex-col">
+    <div className="min-h-screen bg-[#041210] flex flex-col">
       <main className="flex-1 flex items-center justify-center p-4">
-        <div className="bg-[#0b1020]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
+        <div className="bg-[#0a1614]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
           <div className="text-center mb-6">
             <RelayLogo size="lg" className="justify-center mb-2" />
             <p className="text-[#7f8bad] text-sm">Private messaging, beautifully simple.</p>
@@ -90,8 +90,8 @@ export default function LoginPage() {
               <span className="w-2 h-2 rounded-full bg-[#f6b332]" />
               Access requires staff approval
             </div>
-            <div className="mt-5 rounded-2xl border border-white/10 bg-[#11172a] p-1 flex">
-              <span className="flex-1 text-center py-2.5 text-white font-semibold rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6]">Sign In</span>
+            <div className="mt-5 rounded-2xl border border-white/10 bg-[#0f1f1d] p-1 flex">
+              <span className="flex-1 text-center py-2.5 text-white font-semibold rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2]">Sign In</span>
               <Link href="/signup" className="flex-1 text-center py-2.5 text-[#7f8bad] font-semibold rounded-xl hover:text-white transition-colors">Create Account</Link>
             </div>
           </div>
@@ -145,7 +145,7 @@ export default function LoginPage() {
             <div className="flex justify-end">
               <Link
                 href={email.trim() ? `/reset-password?i=${encodeURIComponent(email.trim())}` : '/reset-password'}
-                className="text-sm text-[#8d63ff] hover:underline"
+                className="text-sm text-[#14b8a6] hover:underline"
               >
                 Forgot password?
               </Link>
@@ -154,7 +154,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>

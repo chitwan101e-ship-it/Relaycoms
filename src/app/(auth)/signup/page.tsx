@@ -266,9 +266,9 @@ export default function SignUpPage() {
   const registerSubmitReady = true
 
   return (
-    <div className="min-h-screen bg-[#050814] flex flex-col">
+    <div className="min-h-screen bg-[#041210] flex flex-col">
       <main className="flex-1 flex items-center justify-center p-4">
-        <div className="bg-[#0b1020]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
+        <div className="bg-[#0a1614]/95 rounded-3xl shadow-2xl border border-white/10 w-full max-w-lg p-8">
           <div className="text-center mb-6">
             <RelayLogo size="lg" className="justify-center mb-2" />
             <p className="text-[#7f8bad] text-sm">Private messaging, beautifully simple.</p>
@@ -276,14 +276,14 @@ export default function SignUpPage() {
               <span className="w-2 h-2 rounded-full bg-[#4ade80]" />
               {manualSignupApproval ? 'Access requires staff approval' : 'Accounts are active right after signup'}
             </div>
-            <div className="mt-5 rounded-2xl border border-white/10 bg-[#11172a] p-1 flex">
+            <div className="mt-5 rounded-2xl border border-white/10 bg-[#0f1f1d] p-1 flex">
               <a
                 href="/login"
                 className="flex-1 text-center py-2.5 text-[#7f8bad] font-semibold rounded-xl hover:text-white transition-colors"
               >
                 Sign In
               </a>
-              <span className="flex-1 text-center py-2.5 text-white font-semibold rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6]">
+              <span className="flex-1 text-center py-2.5 text-white font-semibold rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2]">
                 Create Account
               </span>
             </div>
@@ -296,7 +296,7 @@ export default function SignUpPage() {
                   key={i}
                   className={clsx(
                     'h-1 rounded-full transition-all duration-300',
-                    i < progressIndex ? 'w-7 bg-[#8d63ff]' : i === progressIndex ? 'w-7 bg-[#5a7ff6]' : 'w-4 bg-white/20'
+                    i < progressIndex ? 'w-7 bg-[#14b8a6]' : i === progressIndex ? 'w-7 bg-[#0891b2]' : 'w-4 bg-white/20'
                   )}
                 />
               ))}
@@ -309,14 +309,14 @@ export default function SignUpPage() {
               <button
                 type="button"
                 onClick={goBack}
-                className="flex items-center gap-1 text-[#8d63ff] text-sm font-medium mb-5 hover:opacity-70"
+                className="flex items-center gap-1 text-[#14b8a6] text-sm font-medium mb-5 hover:opacity-70"
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
               <h2 className="font-display font-bold text-2xl mb-5 text-white">Create your account</h2>
 
-              <div className="rounded-xl border border-[#8d63ff]/25 bg-[#8d63ff]/10 px-3 py-2.5 text-xs text-[#c4b5fc] mb-5 flex gap-2">
-                <User className="w-4 h-4 shrink-0 mt-0.5 text-[#8d63ff]" />
+              <div className="rounded-xl border border-[#14b8a6]/25 bg-[#14b8a6]/10 px-3 py-2.5 text-xs text-[#c4b5fc] mb-5 flex gap-2">
+                <User className="w-4 h-4 shrink-0 mt-0.5 text-[#14b8a6]" />
                 <span>
                   You will join as a <strong className="text-white">customer</strong>. Use your{' '}
                   <strong className="text-white">legal first and last name</strong> below — nicknames or fake names may
@@ -496,7 +496,7 @@ export default function SignUpPage() {
                 type="button"
                 onClick={() => void sendOTP('details')}
                 disabled={loading || !canContinueStep1}
-                className="w-full mt-4 py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                className="w-full mt-4 py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -517,7 +517,7 @@ export default function SignUpPage() {
               <button
                 type="button"
                 onClick={goBack}
-                className="flex items-center gap-1 text-[#8d63ff] text-sm font-medium mb-5 hover:opacity-70"
+                className="flex items-center gap-1 text-[#14b8a6] text-sm font-medium mb-5 hover:opacity-70"
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
@@ -539,7 +539,7 @@ export default function SignUpPage() {
                     inputMode="numeric"
                     onChange={(e) => handleOtpChange(i, e.target.value)}
                     onKeyDown={(e) => handleOtpKey(i, e)}
-                    className="w-11 h-12 text-center text-lg font-semibold rounded-lg border border-white/15 bg-[#11172a] text-white focus:border-[#7c5af6] focus:ring-2 focus:ring-[#7c5af6]/30 focus:outline-none"
+                    className="w-11 h-12 text-center text-lg font-semibold rounded-lg border border-white/15 bg-[#0f1f1d] text-white focus:border-[#0d9488] focus:ring-2 focus:ring-[#0d9488]/30 focus:outline-none"
                   />
                 ))}
               </div>
@@ -550,7 +550,7 @@ export default function SignUpPage() {
                   type="button"
                   disabled={loading || (showTurnstile && !turnstileOtpToken)}
                   onClick={() => void sendOTP('resend')}
-                  className="text-[#8d63ff] font-medium hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                  className="text-[#14b8a6] font-medium hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
                 >
                   Resend code
                 </button>{' '}
@@ -561,7 +561,7 @@ export default function SignUpPage() {
                     setStep(1)
                     setError('')
                   }}
-                  className="text-[#8d63ff] font-medium hover:underline"
+                  className="text-[#14b8a6] font-medium hover:underline"
                 >
                   Change email
                 </button>
@@ -573,7 +573,7 @@ export default function SignUpPage() {
                 type="button"
                 onClick={() => void verifyAndContinue()}
                 disabled={loading}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -592,13 +592,13 @@ export default function SignUpPage() {
               <button
                 type="button"
                 onClick={goBack}
-                className="flex items-center gap-1 text-[#8d63ff] text-sm font-medium mb-5 hover:opacity-70"
+                className="flex items-center gap-1 text-[#14b8a6] text-sm font-medium mb-5 hover:opacity-70"
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
               <h2 className="font-display font-bold text-2xl mb-1 text-white">Almost there!</h2>
               <p className="text-[#7f8bad] text-sm mb-5">Review your account before we create it.</p>
-              <div className="rounded-xl border border-white/10 bg-[#11172a] p-4 space-y-2.5 mb-5 text-sm">
+              <div className="rounded-xl border border-white/10 bg-[#0f1f1d] p-4 space-y-2.5 mb-5 text-sm">
                 <ReviewRow label="Name" value={`${form.firstName} ${form.lastName}`.trim()} />
                 <ReviewRow label="Username" value={`@${form.username}`} />
                 <ReviewRow label="Email" value={form.email} />
@@ -616,7 +616,7 @@ export default function SignUpPage() {
                 type="button"
                 onClick={() => void register()}
                 disabled={loading || !registerSubmitReady}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -647,7 +647,7 @@ export default function SignUpPage() {
               <button
                 type="button"
                 onClick={() => router.push('/login')}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity"
               >
                 Go to sign in
               </button>
@@ -660,7 +660,7 @@ export default function SignUpPage() {
 }
 
 const inp =
-  'w-full px-3 py-2.5 border border-white/10 bg-[#11172a] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#7c5af6] focus:ring-4 focus:ring-[#7c5af6]/20 focus:outline-none transition-all'
+  'w-full px-3 py-2.5 border border-white/10 bg-[#0f1f1d] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/20 focus:outline-none transition-all'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

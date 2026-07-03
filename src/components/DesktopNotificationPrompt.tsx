@@ -65,9 +65,9 @@ export function DesktopNotificationPrompt({ variant, isLight = false, layout = '
     : 'border-white/[0.08] bg-white/[0.04] text-[#aeb7d6]'
   const btn = isLight
     ? 'bg-slate-900 text-white hover:bg-slate-800'
-    : 'bg-[#8d63ff] text-white hover:bg-[#9d73ff]'
+    : 'bg-[#14b8a6] text-white hover:bg-[#9d73ff]'
   const muted = isLight ? 'text-slate-500' : 'text-[#8892b0]'
-  const accent = isLight ? 'text-slate-600 hover:text-slate-900' : 'text-[#8d63ff] hover:text-[#a78bff]'
+  const accent = isLight ? 'text-slate-600 hover:text-slate-900' : 'text-[#14b8a6] hover:text-[#a78bff]'
 
   if (isDesktopNotifyEnabled()) {
     if (isSidebar) {

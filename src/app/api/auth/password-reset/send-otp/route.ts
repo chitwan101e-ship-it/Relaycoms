@@ -7,6 +7,7 @@ import { rateLimitSendOtp } from '@/lib/authRateLimit'
 import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
 import { resolveLoginIdentifier } from '@/lib/resolveLoginIdentifier'
 import { getResendFromAddress } from '@/lib/resend'
+import { isSyntheticStaffAuthEmail, normalizeStaffUsername } from '@/lib/staffAuthEmail'
 
 function getResend() {
   const key = process.env.RESEND_API_KEY
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest) {
       subject: 'Your Relay password reset code',
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-          <h1 style="font-size: 24px; color: #7c5af6; margin-bottom: 8px;">Relay</h1>
+          <h1 style="font-size: 24px; color: #0d9488; margin-bottom: 8px;">Relay</h1>
           <p style="color: #444; margin-bottom: 24px;">Use this code to finish resetting your password:</p>
           <div style="background: #f5f3ff; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
             <span style="font-size: 40px; font-weight: 700; letter-spacing: 8px; color: #5b21b6;">${otp}</span>

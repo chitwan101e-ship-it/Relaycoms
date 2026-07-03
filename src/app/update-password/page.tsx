@@ -8,7 +8,7 @@ import RelayLogo from '@/components/RelayLogo'
 import { Loader2, Eye, EyeOff } from 'lucide-react'
 
 const inp =
-  'w-full px-3 py-2.5 border border-white/10 bg-[#11172a] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#7c5af6] focus:ring-4 focus:ring-[#7c5af6]/20 focus:outline-none transition-all'
+  'w-full px-3 py-2.5 border border-white/10 bg-[#0f1f1d] text-white placeholder:text-[#6f7896] rounded-lg text-sm focus:border-[#0d9488] focus:ring-4 focus:ring-[#0d9488]/20 focus:outline-none transition-all'
 
 export default function UpdatePasswordPage() {
   const router = useRouter()
@@ -44,7 +44,7 @@ export default function UpdatePasswordPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050814] text-white flex flex-col items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-[#041210] text-white flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
           <RelayLogo theme="dark" size="md" />
@@ -98,7 +98,7 @@ export default function UpdatePasswordPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-[#7c5af6] hover:bg-[#6d4ee6] font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-xl bg-[#0d9488] hover:bg-[#6d4ee6] font-semibold text-white disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
             Update password
@@ -106,7 +106,7 @@ export default function UpdatePasswordPage() {
         </form>
 
         <p className="text-center mt-8 text-sm text-[#7f8bad]">
-          <Link href="/login" className="text-[#8d63ff] hover:underline">
+          <Link href="/login" className="text-[#14b8a6] hover:underline">
             Back to sign in
           </Link>
         </p>

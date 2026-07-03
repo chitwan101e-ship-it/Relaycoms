@@ -37,7 +37,7 @@ export async function sendAccountApprovedEmail(opts: {
     subject: `Your ${opts.businessName} account is approved`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h1 style="font-size: 24px; color: #7c5af6; margin-bottom: 8px;">${escapeHtml(opts.businessName)}</h1>
+        <h1 style="font-size: 24px; color: #0d9488; margin-bottom: 8px;">${escapeHtml(opts.businessName)}</h1>
         <p style="color: #444; margin-bottom: 16px; line-height: 1.5;">${escapeHtml(message)}</p>
         <p style="margin-bottom: 24px;">
           <a href="${loginUrl}" style="display: inline-block; background: #5b21b6; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 10px; font-weight: 600;">Sign in to Relay</a>

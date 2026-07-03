@@ -6,12 +6,13 @@ import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { CustomerMobileFooterNav } from '@/components/CustomerMobileFooterNav'
 
-const DOWNLOAD_GUIDE_URL = 'https://www.juwa777.com/blog-download-juwa-777'
+const DOWNLOAD_GUIDE_URL = process.env.NEXT_PUBLIC_DOWNLOAD_GUIDE_URL?.trim() || ''
 
 const downloadGuideLinkClass =
-  'font-semibold text-[#8d63ff] underline decoration-[#8d63ff]/50 underline-offset-2 hover:text-[#b8a6ff]'
+  'font-semibold text-[#14b8a6] underline decoration-[#14b8a6]/50 underline-offset-2 hover:text-[#2dd4bf]'
 
 function DownloadGuideLink() {
+  if (!DOWNLOAD_GUIDE_URL) return null
   return (
     <a href={DOWNLOAD_GUIDE_URL} target="_blank" rel="noopener noreferrer" className={downloadGuideLinkClass}>
       download guide
@@ -72,15 +73,15 @@ export default function RulesPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="h-8 w-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="h-8 w-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_left,_#0f1840_0%,_#070a18_45%,_#050814_100%)] text-[14px] leading-snug text-white">
-      <header className="flex items-center gap-2 border-b border-white/[0.08] bg-[#0b1020]/40 px-4 pb-2 pt-3 backdrop-blur-sm">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_left,_#0f1840_0%,_#041210_45%,_#041210_100%)] text-[14px] leading-snug text-white">
+      <header className="flex items-center gap-2 border-b border-white/[0.08] bg-[#0a1614]/40 px-4 pb-2 pt-3 backdrop-blur-sm">
         <button
           type="button"
           onClick={() => router.push('/feed')}
@@ -113,7 +114,7 @@ export default function RulesPage() {
         </ul>
 
         <p className="mt-8 text-[10px] font-bold uppercase tracking-[0.16em] text-[#8892b0]">Promotions</p>
-        <div className="mt-3 rounded-2xl border border-[#8d63ff]/25 bg-[#8d63ff]/10 p-4">
+        <div className="mt-3 rounded-2xl border border-[#14b8a6]/25 bg-[#14b8a6]/10 p-4">
           <h2 className="text-[15px] font-bold text-white">FREE Play promo</h2>
           <p className="mt-2 text-[13px] leading-relaxed text-[#c4cbe6]">
             Announced every <span className="font-semibold text-white">Thursday</span> on Relay — check your feed and
@@ -149,17 +150,19 @@ export default function RulesPage() {
           </ul>
         </div>
 
-        <p className="mt-5 text-[12px] leading-relaxed text-[#7f8bad] border-l-2 border-[#8d63ff]/35 pl-3.5">
+        <p className="mt-5 text-[12px] leading-relaxed text-[#7f8bad] border-l-2 border-[#14b8a6]/35 pl-3.5">
           Relay may suspend or restrict accounts that break these program rules, abuse the platform, or put other
           members at risk. We exercise this only when we believe it is necessary to keep Relay fair and safe for
           everyone.
         </p>
         <div className="mt-5 space-y-3 rounded-2xl border border-white/[0.08] bg-[rgba(11,18,40,0.9)] p-4 text-[13px] leading-relaxed text-[#8892b0]">
+          {DOWNLOAD_GUIDE_URL ? (
+            <p>
+              Problem with installation? Check out the <DownloadGuideLink />.
+            </p>
+          ) : null}
           <p>
-            Problem with installation? Check out the <DownloadGuideLink />.
-          </p>
-          <p>
-            For more information, open <span className="font-semibold text-[#8d63ff]">Chat</span> from the bar below
+            For more information, open <span className="font-semibold text-[#14b8a6]">Chat</span> from the bar below
             and message our team.
           </p>
         </div>

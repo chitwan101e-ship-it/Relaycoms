@@ -222,8 +222,8 @@ export default function NotificationsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
@@ -232,8 +232,8 @@ export default function NotificationsPage() {
   const homeHref = portalRole === 'business' ? '/dashboard' : '/feed'
 
   return (
-    <div className="min-h-screen bg-[#050814] pb-28 text-white">
-      <header className="sticky top-0 z-40 bg-[#0b1020]/95 border-b border-white/10 backdrop-blur">
+    <div className="min-h-screen bg-[#041210] pb-28 text-white">
+      <header className="sticky top-0 z-40 bg-[#0a1614]/95 border-b border-white/10 backdrop-blur">
         <div className="max-w-3xl mx-auto px-3 sm:px-4 h-14 flex items-center gap-3">
           <button
             type="button"
@@ -243,7 +243,7 @@ export default function NotificationsPage() {
           >
             <ArrowLeft className="w-5 h-5 text-[#b8c0dc]" />
           </button>
-          <Bell className="w-5 h-5 text-[#8d63ff]" />
+          <Bell className="w-5 h-5 text-[#14b8a6]" />
           <h1 className="font-semibold text-white">Notifications</h1>
           <span className="text-xs text-[#7f8bad] ml-1 hidden sm:inline">{unreadCount} unread</span>
           <div className="ml-auto flex items-center gap-1">
@@ -257,7 +257,7 @@ export default function NotificationsPage() {
               type="button"
               onClick={() => void markAll()}
               disabled={busy === 'all' || unreadCount === 0}
-              className="text-sm font-medium text-[#8d63ff] disabled:opacity-40 px-2 py-1"
+              className="text-sm font-medium text-[#14b8a6] disabled:opacity-40 px-2 py-1"
             >
               {busy === 'all' ? 'Marking...' : 'Mark all read'}
             </button>
@@ -267,7 +267,7 @@ export default function NotificationsPage() {
 
       <main className="max-w-3xl mx-auto p-4">
         {items.length === 0 ? (
-          <div className="bg-[#0b1020]/95 rounded-xl border border-white/10 p-10 text-center text-[#8f99b8]">
+          <div className="bg-[#0a1614]/95 rounded-xl border border-white/10 p-10 text-center text-[#8f99b8]">
             No notifications yet.
           </div>
         ) : (
@@ -275,22 +275,22 @@ export default function NotificationsPage() {
             {items.map((n) => (
               <article
                 key={n.id}
-                className={`bg-[#0b1020]/95 rounded-xl border p-4 transition ${
-                  n.read ? 'border-white/10' : 'border-[#8d63ff]/40 shadow-[0_0_0_1px_rgba(141,99,255,0.1)]'
+                className={`bg-[#0a1614]/95 rounded-xl border p-4 transition ${
+                  n.read ? 'border-white/10' : 'border-[#14b8a6]/40 shadow-[0_0_0_1px_rgba(141,99,255,0.1)]'
                 }`}
               >
                 <div className="flex items-start gap-3">
                   <div
                     className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                      n.read ? 'bg-white/5' : 'bg-[#8d63ff]/15'
+                      n.read ? 'bg-white/5' : 'bg-[#14b8a6]/15'
                     }`}
                   >
-                    <Bell className={`w-4 h-4 ${n.read ? 'text-[#6f7896]' : 'text-[#8d63ff]'}`} />
+                    <Bell className={`w-4 h-4 ${n.read ? 'text-[#6f7896]' : 'text-[#14b8a6]'}`} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h2 className="font-semibold text-white truncate">{n.title}</h2>
-                      {!n.read ? <span className="w-2 h-2 rounded-full bg-[#8d63ff]" /> : null}
+                      {!n.read ? <span className="w-2 h-2 rounded-full bg-[#14b8a6]" /> : null}
                     </div>
                     <p className="text-sm text-[#b8c0dc] mt-1 whitespace-pre-wrap">{n.body}</p>
                     <div className="text-xs text-[#7f8bad] mt-2">{timeAgo(n.created_at)}</div>
@@ -300,7 +300,7 @@ export default function NotificationsPage() {
                       type="button"
                       onClick={() => void markOne(n.id)}
                       disabled={busy === n.id}
-                      className="text-[#7f8bad] hover:text-[#8d63ff] p-1 rounded"
+                      className="text-[#7f8bad] hover:text-[#14b8a6] p-1 rounded"
                       aria-label="Mark as read"
                     >
                       {busy === n.id ? (
@@ -339,7 +339,7 @@ export default function NotificationsPage() {
           </Link>
           <Link
             href="/notifications"
-            className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#8d63ff]"
+            className="relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold text-[#14b8a6]"
           >
             <Bell className="w-[22px] h-[22px]" strokeWidth={2} />
             {unreadCount > 0 ? (

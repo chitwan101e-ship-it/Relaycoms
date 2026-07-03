@@ -6,11 +6,11 @@ module.exports = {
     extend: {
       colors: {
         brand: {
-          50: '#eef4ff',
-          100: '#dbe8ff',
-          300: '#8fb4ff',
-          500: '#1a56e8',
-          600: '#1344cc',
+          50: '#f0fdfa',
+          100: '#ccfbf1',
+          300: '#5eead4',
+          500: '#0d9488',
+          600: '#0f766e',
         },
       },
       fontFamily: {

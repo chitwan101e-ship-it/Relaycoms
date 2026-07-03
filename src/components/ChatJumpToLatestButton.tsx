@@ -20,7 +20,7 @@ export function ChatJumpToLatestButton({ visible, onClick, className }: ChatJump
         'flex h-9 w-9 items-center justify-center rounded-full',
         'border border-white/15 bg-[#1a2748]/95 text-white shadow-lg backdrop-blur-sm',
         'transition hover:scale-105 hover:bg-[#243056]',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8d63ff]',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#14b8a6]',
         className
       )}
     >

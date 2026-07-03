@@ -687,9 +687,9 @@ export default function FeedPage() {
       const el = document.getElementById(`announcement-${postId}`)
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       if (el) {
-        el.classList.add('ring-2', 'ring-[#8d63ff]', 'ring-offset-2', 'ring-offset-[#050814]')
+        el.classList.add('ring-2', 'ring-[#14b8a6]', 'ring-offset-2', 'ring-offset-[#041210]')
         window.setTimeout(() => {
-          el.classList.remove('ring-2', 'ring-[#8d63ff]', 'ring-offset-2', 'ring-offset-[#050814]')
+          el.classList.remove('ring-2', 'ring-[#14b8a6]', 'ring-offset-2', 'ring-offset-[#041210]')
         }, 2800)
       }
     }, 150)
@@ -1691,16 +1691,16 @@ export default function FeedPage() {
 
   if (loading || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
 
-  const fbBlue = appearance === 'playful' ? '#a171ff' : '#8d63ff'
+  const fbBlue = appearance === 'playful' ? '#a171ff' : '#14b8a6'
   /** Relay messaging panel — purple gradient (HTML mock), not Messenger blue */
-  const relayChatFrom = appearance === 'playful' ? '#8d63ff' : '#7c5af6'
-  const relayChatTo = '#5a7ff6'
+  const relayChatFrom = appearance === 'playful' ? '#14b8a6' : '#0d9488'
+  const relayChatTo = '#0891b2'
   const relayChatGradient = `linear-gradient(135deg, ${relayChatFrom}, ${relayChatTo})`
   /** Light theme removed — keep flag so existing ternaries resolve to dark styling. */
   const isLight = false
@@ -1709,7 +1709,7 @@ export default function FeedPage() {
     ? 'bg-[radial-gradient(circle_at_top,_#eef2ff_0%,_#f8faff_40%,_#ffffff_100%)] text-slate-900'
     : isPlayful
       ? 'bg-[radial-gradient(circle_at_top,_#2b1d63_0%,_#100e2a_40%,_#070713_100%)] text-white'
-      : 'bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#070a18_42%,_#050814_100%)] text-white'
+      : 'bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#041210_42%,_#041210_100%)] text-white'
   const panelBg = isLight ? 'bg-white/95 border-slate-200' : 'bg-[#0e1734]/80 border-white/10'
   const softPanelBg = isLight ? 'bg-white/95 border-slate-200' : 'bg-[#0e1734]/75 border-white/10'
   const mutedText = isLight ? 'text-slate-500' : 'text-[#7f8bad]'
@@ -1856,7 +1856,7 @@ export default function FeedPage() {
             </div>
             <div
               className={`flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium ${
-                isLight ? 'bg-violet-100 text-violet-700' : 'bg-[#8d63ff]/12 text-[#8d63ff]'
+                isLight ? 'bg-violet-100 text-violet-700' : 'bg-[#14b8a6]/12 text-[#14b8a6]'
               }`}
             >
               <Home className="w-7 h-7 shrink-0" strokeWidth={2} />
@@ -1878,7 +1878,7 @@ export default function FeedPage() {
                 isLight ? 'text-slate-700 hover:bg-slate-100' : 'text-[#c4cbe6] hover:bg-white/5'
               }`}
             >
-              <Users className="w-7 h-7 shrink-0 text-[#8d63ff]" strokeWidth={2} />
+              <Users className="w-7 h-7 shrink-0 text-[#14b8a6]" strokeWidth={2} />
               Announcements
             </button>
           </div>
@@ -2012,7 +2012,7 @@ export default function FeedPage() {
                             )
                             setReplyThreadDraft('')
                           }}
-                          className={`text-[11px] font-semibold ${isLight ? 'text-[#1877f2]' : 'text-[#8d63ff]'}`}
+                          className={`text-[11px] font-semibold ${isLight ? 'text-[#1877f2]' : 'text-[#14b8a6]'}`}
                         >
                           Reply
                         </button>
@@ -2150,7 +2150,7 @@ export default function FeedPage() {
                           <ThumbsUp
                             className={clsx(
                               'w-[18px] h-[18px]',
-                              liked && 'fill-[#1877f2] text-[#8d63ff]'
+                              liked && 'fill-[#1877f2] text-[#14b8a6]'
                             )}
                           />
                         )}
@@ -2163,7 +2163,7 @@ export default function FeedPage() {
                         }
                         className={clsx(
                           `flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-[15px] font-medium ${isLight ? 'text-slate-600 hover:bg-slate-100' : 'text-[#b8c0dc] hover:bg-white/10'}`,
-                          open && 'text-[#8d63ff]'
+                          open && 'text-[#14b8a6]'
                         )}
                       >
                         <MessageCircle className="w-[18px] h-[18px]" />
@@ -2247,7 +2247,7 @@ export default function FeedPage() {
               Quick tip
             </p>
             <p className={`text-[13px] leading-relaxed ${bodyText}`}>
-              Tap the <strong className={isLight ? 'text-violet-600' : 'text-[#8d63ff]'}>chat</strong> button to open
+              Tap the <strong className={isLight ? 'text-violet-600' : 'text-[#14b8a6]'}>chat</strong> button to open
               Messages. Pick a business and send text or photos — fast and private.
             </p>
           </div>
@@ -2265,7 +2265,7 @@ export default function FeedPage() {
       {/* Relay messages panel */}
       {supportOpen && (
         <div
-          className="fixed z-50 flex flex-col rounded-[20px] shadow-2xl border border-[#8d63ff]/30 bg-[#0a1228] overflow-hidden w-[min(340px,calc(100vw-1.75rem))] sm:w-[380px] h-[min(85dvh,620px)] max-h-[min(calc(100dvh-8rem-env(safe-area-inset-bottom)),620px)] min-[900px]:max-h-[calc(100dvh-7rem)] max-[899px]:bottom-[calc(6.5rem+env(safe-area-inset-bottom))] min-[900px]:bottom-24 right-[max(0.875rem,env(safe-area-inset-right))]"
+          className="fixed z-50 flex flex-col rounded-[20px] shadow-2xl border border-[#14b8a6]/30 bg-[#0a1228] overflow-hidden w-[min(340px,calc(100vw-1.75rem))] sm:w-[380px] h-[min(85dvh,620px)] max-h-[min(calc(100dvh-8rem-env(safe-area-inset-bottom)),620px)] min-[900px]:max-h-[calc(100dvh-7rem)] max-[899px]:bottom-[calc(6.5rem+env(safe-area-inset-bottom))] min-[900px]:bottom-24 right-[max(0.875rem,env(safe-area-inset-right))]"
         >
           <div
             className="flex items-center gap-2 px-2 py-2.5 text-white shrink-0 min-h-[52px]"
@@ -2378,7 +2378,7 @@ export default function FeedPage() {
             <div className="flex-1 flex flex-col min-h-0 bg-[#0b132c]">
               {supportLoading && !conversation ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 min-h-0">
-                  <Loader2 className="h-9 w-9 animate-spin text-[#8d63ff]" aria-hidden />
+                  <Loader2 className="h-9 w-9 animate-spin text-[#14b8a6]" aria-hidden />
                   <p className="text-sm text-[#9ba6cb]">Opening your messages…</p>
                 </div>
               ) : conversation ? (
@@ -2391,7 +2391,7 @@ export default function FeedPage() {
               >
                 {supportLoading && messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                    <Loader2 className="h-9 w-9 animate-spin text-[#8d63ff] mb-3" aria-hidden />
+                    <Loader2 className="h-9 w-9 animate-spin text-[#14b8a6] mb-3" aria-hidden />
                     <p className="text-sm text-[#9ba6cb]">Loading messages…</p>
                   </div>
                 ) : messages.length === 0 ? (
@@ -2473,7 +2473,7 @@ export default function FeedPage() {
                             'relative text-sm shadow-lg overflow-hidden max-w-full ring-1 ring-white/10',
                             mine
                               ? 'rounded-2xl rounded-br-md'
-                              : 'rounded-2xl rounded-bl-md bg-[#13213d] text-white border border-[#8d63ff]/20'
+                              : 'rounded-2xl rounded-bl-md bg-[#13213d] text-white border border-[#14b8a6]/20'
                           )}
                           style={mine ? { background: relayChatGradient, color: 'white' } : undefined}
                         >
@@ -2528,7 +2528,7 @@ export default function FeedPage() {
                             <button
                               type="button"
                               onClick={() => setReplyTarget(m)}
-                              className="font-semibold text-[#8d63ff] hover:text-[#a78bff] hover:underline"
+                              className="font-semibold text-[#14b8a6] hover:text-[#a78bff] hover:underline"
                             >
                               Reply
                             </button>
@@ -2678,7 +2678,7 @@ export default function FeedPage() {
             onClick={() => onMessagesEntryClick()}
             className="group relative flex h-[58px] w-[58px] items-center justify-center rounded-full text-white transition-transform duration-200 hover:scale-[1.06] hover:-translate-y-0.5 active:scale-[0.97]"
             style={{
-              background: 'linear-gradient(135deg, #7c5af6, #5a7ff6)',
+              background: 'linear-gradient(135deg, #0d9488, #0891b2)',
               boxShadow: '0 8px 28px -6px rgba(124,90,246,0.7)',
             }}
             aria-label="Open messages"
@@ -2699,7 +2699,7 @@ export default function FeedPage() {
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             {chatUnreadCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-[#050814] bg-[#ff3b5c] px-1 text-[9px] font-extrabold leading-none text-white">
+              <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-[#041210] bg-[#ff3b5c] px-1 text-[9px] font-extrabold leading-none text-white">
                 {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
               </span>
             ) : null}
@@ -2710,7 +2710,7 @@ export default function FeedPage() {
       {toast ? (
         <div
           role="status"
-          className="fixed left-1/2 z-[60] max-w-sm -translate-x-1/2 rounded-xl border border-white/15 bg-[#11172a] px-4 py-3 text-center text-sm text-white shadow-2xl max-[899px]:bottom-[calc(6.75rem+env(safe-area-inset-bottom))] min-[900px]:bottom-28"
+          className="fixed left-1/2 z-[60] max-w-sm -translate-x-1/2 rounded-xl border border-white/15 bg-[#0f1f1d] px-4 py-3 text-center text-sm text-white shadow-2xl max-[899px]:bottom-[calc(6.75rem+env(safe-area-inset-bottom))] min-[900px]:bottom-28"
         >
           {toast}
         </div>

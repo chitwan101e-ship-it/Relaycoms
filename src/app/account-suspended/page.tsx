@@ -66,15 +66,15 @@ export default function AccountSuspendedPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[#050814] text-white flex flex-col items-center justify-center p-6">
-      <div className="max-w-md w-full rounded-3xl border border-amber-500/30 bg-[#0b1020] p-8 text-center space-y-4">
+    <div className="min-h-screen bg-[#041210] text-white flex flex-col items-center justify-center p-6">
+      <div className="max-w-md w-full rounded-3xl border border-amber-500/30 bg-[#0a1614] p-8 text-center space-y-4">
         <div className="w-14 h-14 rounded-2xl bg-amber-500/15 mx-auto flex items-center justify-center text-2xl" aria-hidden>
           ⏸
         </div>
@@ -87,12 +87,12 @@ export default function AccountSuspendedPage() {
           <button
             type="button"
             onClick={() => void signOut()}
-            className="w-full py-3 rounded-xl border border-white/15 bg-[#11172a] hover:bg-[#151d39] flex items-center justify-center gap-2 text-sm font-semibold"
+            className="w-full py-3 rounded-xl border border-white/15 bg-[#0f1f1d] hover:bg-[#151d39] flex items-center justify-center gap-2 text-sm font-semibold"
           >
             <LogOut className="w-4 h-4" />
             Sign out
           </button>
-          <Link href="/login" className="text-sm text-[#8d63ff] hover:underline">
+          <Link href="/login" className="text-sm text-[#14b8a6] hover:underline">
             Back to sign in
           </Link>
         </div>

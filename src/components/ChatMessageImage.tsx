@@ -48,7 +48,7 @@ type QuoteProps = {
 
 const QUOTE_BAR: Record<QuoteVariant, string> = {
   'customer-mine': 'bg-white/70',
-  'customer-other': 'bg-[#8d63ff]',
+  'customer-other': 'bg-[#14b8a6]',
   'staff-out': 'bg-white/60',
   'staff-in': 'bg-[#6f54ff]',
 }
@@ -111,11 +111,11 @@ export function ReplyTargetBar({ authorLabel, previewText, onCancel, className }
   return (
     <div
       className={clsx(
-        'flex items-stretch gap-2 rounded-xl border border-[#8d63ff]/35 bg-[#8d63ff]/10 px-2.5 py-2',
+        'flex items-stretch gap-2 rounded-xl border border-[#14b8a6]/35 bg-[#14b8a6]/10 px-2.5 py-2',
         className
       )}
     >
-      <span className="w-0.5 shrink-0 rounded-full bg-[#8d63ff] self-stretch" aria-hidden />
+      <span className="w-0.5 shrink-0 rounded-full bg-[#14b8a6] self-stretch" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-semibold text-[#b8a6ff] truncate">Replying to {authorLabel}</p>
         <p className="text-[12px] text-[#9ba6cb] truncate">{previewText}</p>

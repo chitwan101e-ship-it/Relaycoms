@@ -209,7 +209,7 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
         <button
           type="button"
           onClick={() => router.push('/login')}
-          className="w-full py-3 rounded-xl bg-gradient-to-r from-[#7c5af6] to-[#5a7ff6] text-white font-semibold hover:opacity-90 transition-opacity"
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0891b2] text-white font-semibold hover:opacity-90 transition-opacity"
         >
           Go to sign in
         </button>
@@ -220,7 +220,7 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
   if (loading || status === null) {
     return (
       <div className={`flex justify-center py-10 ${embedded ? '' : 'min-h-[40vh]'}`}>
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
@@ -236,7 +236,7 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
 
   const subtitle =
     status === 'pending' && embedded ? (
-      <p className="text-[#8d63ff] text-sm font-semibold">Waiting for approval</p>
+      <p className="text-[#14b8a6] text-sm font-semibold">Waiting for approval</p>
     ) : null
 
   const body =
@@ -289,13 +289,13 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
         <button
           type="button"
           onClick={() => void signOut()}
-          className="w-full py-3 rounded-xl border border-white/15 bg-[#11172a] hover:bg-[#151d39] flex items-center justify-center gap-2 text-sm font-semibold text-white"
+          className="w-full py-3 rounded-xl border border-white/15 bg-[#0f1f1d] hover:bg-[#151d39] flex items-center justify-center gap-2 text-sm font-semibold text-white"
         >
           <LogOut className="w-4 h-4" />
           Sign out
         </button>
         {!embedded ? (
-          <Link href="/login" className="text-sm text-[#8d63ff] hover:underline">
+          <Link href="/login" className="text-sm text-[#14b8a6] hover:underline">
             Back to sign in
           </Link>
         ) : null}
@@ -306,8 +306,8 @@ export function PendingApprovalPanel({ embedded = false, needsSignIn = false }: 
   if (embedded) return content
 
   return (
-    <div className="min-h-screen bg-[#050814] text-white flex flex-col items-center justify-center p-6">
-      <div className="max-w-md w-full rounded-3xl border border-white/10 bg-[#0b1020] p-8">{content}</div>
+    <div className="min-h-screen bg-[#041210] text-white flex flex-col items-center justify-center p-6">
+      <div className="max-w-md w-full rounded-3xl border border-white/10 bg-[#0a1614] p-8">{content}</div>
     </div>
   )
 }

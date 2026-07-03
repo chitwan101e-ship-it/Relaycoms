@@ -88,7 +88,7 @@ export function CustomerMobileFooterNav({
   const profileActive = pathname.startsWith('/profile')
 
   const muted = isLight ? 'text-slate-500' : 'text-[#8892b0]'
-  const accent = isLight ? 'text-violet-600' : 'text-[#8d63ff]'
+  const accent = isLight ? 'text-violet-600' : 'text-[#14b8a6]'
 
   function goChatFromOtherPage() {
     router.push('/feed?openChat=1')

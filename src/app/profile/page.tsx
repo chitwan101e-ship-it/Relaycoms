@@ -162,8 +162,8 @@ export default function ProfilePage() {
 
   if (loading || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050814]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8d63ff]" />
+      <div className="min-h-screen flex items-center justify-center bg-[#041210]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#14b8a6]" />
       </div>
     )
   }
@@ -175,8 +175,8 @@ export default function ProfilePage() {
   const isPlayful = appearance === 'playful'
   const pageBg = isPlayful
     ? 'bg-[radial-gradient(circle_at_top,_#2b1d63_0%,_#100e2a_40%,_#070713_100%)] text-white'
-    : 'bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#070a18_42%,_#050814_100%)] text-white'
-  const cardBg = 'bg-[#0b1020]/95 border-white/10'
+    : 'bg-[radial-gradient(circle_at_top,_#1c2757_0%,_#041210_42%,_#041210_100%)] text-white'
+  const cardBg = 'bg-[#0a1614]/95 border-white/10'
   const mutedText = 'text-[#7f8bad]'
   const titleText = 'text-white font-semibold'
   const bodyText = 'text-[#c4cbe6]'
@@ -188,7 +188,7 @@ export default function ProfilePage() {
 
   return (
     <div className={`min-h-screen text-[14px] leading-snug ${pageBg}`}>
-      <header className="px-4 pt-3 pb-2 flex items-center gap-2 border-b border-white/[0.08] bg-[#0b1020]/40 backdrop-blur-sm">
+      <header className="px-4 pt-3 pb-2 flex items-center gap-2 border-b border-white/[0.08] bg-[#0a1614]/40 backdrop-blur-sm">
         <button
           type="button"
           onClick={() => router.push('/feed')}
@@ -210,7 +210,7 @@ export default function ProfilePage() {
               <img
                 src={profile.avatar_url}
                 alt={`${displayName} profile`}
-                className="w-16 h-16 rounded-full object-cover border border-white/10 bg-[#11172a]"
+                className="w-16 h-16 rounded-full object-cover border border-white/10 bg-[#0f1f1d]"
               />
             ) : (
               <div className="w-16 h-16 rounded-full bg-[#d12f2f] text-white text-lg font-bold flex items-center justify-center border border-white/10">
@@ -256,8 +256,8 @@ export default function ProfilePage() {
                 onClick={() => setAppearance(id)}
                 className={`rounded-xl border px-2 py-2.5 text-center transition-all ${
                   appearance === id
-                    ? 'border-[#8d63ff] bg-[#1a2040] text-[#8d63ff]'
-                    : 'border-white/10 bg-[#11172a] text-[#7f8bad] hover:border-white/20'
+                    ? 'border-[#14b8a6] bg-[#1a2040] text-[#14b8a6]'
+                    : 'border-white/10 bg-[#0f1f1d] text-[#7f8bad] hover:border-white/20'
                 }`}
               >
                 <Icon className="w-4 h-4 mx-auto mb-1" />

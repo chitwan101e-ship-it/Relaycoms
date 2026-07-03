@@ -1,0 +1,17 @@
+{
+  "name": "Relaycoms",
+  "short_name": "Relay",
+  "description": "Private messaging and customer support for teams.",
+  "start_url": "/login",
+  "display": "standalone",
+  "background_color": "#041210",
+  "theme_color": "#0d9488",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
