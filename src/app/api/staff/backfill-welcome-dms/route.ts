@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { data: biz } = await admin.from('businesses').select('name').eq('id', businessId).maybeSingle()
-    const businessName = (biz?.name as string | undefined) ?? 'Juwa Bros'
+    const businessName = (biz?.name as string | undefined) ?? 'Relay'
 
     const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000).toISOString()
     const customers: {

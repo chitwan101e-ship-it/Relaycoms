@@ -1025,7 +1025,7 @@ export default function FeedPage() {
     const followedRows = list.filter((b) => followedSet.has(b.id))
     const scoped = followedRows.length > 0 ? followedRows : list
 
-    const slugHints = ['support', 'relay', 'jbcoms', 'admin', 'help']
+    const slugHints = ['support', 'relay', 'relaycoms', 'admin', 'help']
     for (const s of slugHints) {
       const hit = scoped.find((b) => b.slug.toLowerCase() === s)
       if (hit) return hit.id

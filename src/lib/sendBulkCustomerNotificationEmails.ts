@@ -81,7 +81,7 @@ export async function sendBulkCustomerNotificationEmails(
   }
 
   const uniqueIds = [...new Set(opts.userIds.filter(Boolean))]
-  const brandName = opts.brandName?.trim() || 'Juwa Bros'
+  const brandName = opts.brandName?.trim() || 'Relay'
   const ctaLabel = opts.ctaLabel?.trim() || 'Open in Relay'
   const linkPath = opts.linkPath.startsWith('/') ? opts.linkPath : `/${opts.linkPath}`
   const linkUrl = `${getPublicSiteUrl()}${linkPath}`
@@ -148,7 +148,7 @@ export async function sendSingleCustomerNotificationEmail(
   const email = await lookupCustomerEmail(admin, opts.userId)
   if (!email) return 'skipped'
 
-  const brandName = opts.brandName?.trim() || 'Juwa Bros'
+  const brandName = opts.brandName?.trim() || 'Relay'
   const ctaLabel = opts.ctaLabel?.trim() || 'Open message'
   const linkPath = opts.linkPath.startsWith('/') ? opts.linkPath : `/${opts.linkPath}`
   const linkUrl = `${getPublicSiteUrl()}${linkPath}`

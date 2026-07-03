@@ -2905,7 +2905,7 @@ export default function DashboardPage() {
   }): Promise<{ sent: number; skipped: number; failed: number; recipientCount?: number } | null> {
     if (!payload.labelPresetKeys?.length && !payload.userIds?.length) return null
     try {
-      const brandName = businessInfo?.name || 'Juwa Bros'
+      const brandName = businessInfo?.name || 'Relay'
       const res = await fetch('/api/staff/send-bulk-notification-emails', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

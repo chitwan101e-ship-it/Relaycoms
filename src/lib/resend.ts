@@ -7,5 +7,5 @@ export function getResend(): Resend | null {
 }
 
 export function getResendFromAddress(): string {
-  return process.env.RESEND_FROM_EMAIL?.trim() || 'noreply@jbcoms.com'
+  return process.env.RESEND_FROM_EMAIL?.trim() || 'noreply@relaycoms.com'
 }

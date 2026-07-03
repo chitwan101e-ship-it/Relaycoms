@@ -6,7 +6,7 @@ import { getClientIp } from '@/lib/clientIp'
 import { rateLimitSendOtp } from '@/lib/authRateLimit'
 import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
 import { resolveLoginIdentifier } from '@/lib/resolveLoginIdentifier'
-import { isSyntheticStaffAuthEmail, normalizeStaffUsername } from '@/lib/staffAuthEmail'
+import { getResendFromAddress } from '@/lib/resend'
 
 function getResend() {
   const key = process.env.RESEND_API_KEY
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
     if (dbError) throw dbError
 
     const { error: emailError } = await getResend().emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'noreply@jbcoms.com',
+      from: getResendFromAddress(),
       to: target.authEmail,
       subject: 'Your Relay password reset code',
       html: `

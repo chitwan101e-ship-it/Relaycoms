@@ -1,18 +1,12 @@
 // src/app/api/auth/send-otp/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { Resend } from 'resend'
+import crypto from 'crypto'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getClientIp } from '@/lib/clientIp'
 import { rateLimitSendOtp } from '@/lib/authRateLimit'
 import { verifyTurnstileToken } from '@/lib/verifyTurnstile'
 import { OTP_RESEND_KEY_ERROR, OTP_SEND_CONFIG_ERROR } from '@/lib/userFacingErrors'
-import crypto from 'crypto'
-
-function getResend() {
-  const key = process.env.RESEND_API_KEY
-  if (!key) throw new Error('RESEND_API_KEY is not configured')
-  return new Resend(key)
-}
+import { getResend, getResendFromAddress } from '@/lib/resend'
 
 function hashToken(token: string) {
   return crypto.createHash('sha256').update(token).digest('hex')
@@ -86,13 +80,16 @@ export async function POST(req: NextRequest) {
     if (dbError) throw dbError
 
     // Send email via Resend
-    const { error: emailError } = await getResend().emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'noreply@jbcoms.com',
+    const resend = getResend()
+    if (!resend) throw new Error('RESEND_API_KEY is not configured')
+
+    const { error: emailError } = await resend.emails.send({
+      from: getResendFromAddress(),
       to: email,
-      subject: 'Your JBComs verification code',
+      subject: 'Your Relay verification code',
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-          <h1 style="font-size: 24px; color: #1a56e8; margin-bottom: 8px;">JBComs</h1>
+          <h1 style="font-size: 24px; color: #7c5af6; margin-bottom: 8px;">Relay</h1>
           <p style="color: #444; margin-bottom: 24px;">Your email verification code:</p>
           <div style="background: #f0f5ff; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
             <span style="font-size: 40px; font-weight: 700; letter-spacing: 8px; color: #1344cc;">${otp}</span>

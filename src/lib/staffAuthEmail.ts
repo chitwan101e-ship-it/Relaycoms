@@ -2,7 +2,7 @@
 export function staffAuthEmailForUsername(rawUsername: string): string {
   const clean = rawUsername.trim().replace(/^@+/, '').toLowerCase()
   const domain =
-    (typeof process !== 'undefined' && process.env.STAFF_AUTH_EMAIL_DOMAIN?.trim()) || 'relay-staff.jbcoms'
+    (typeof process !== 'undefined' && process.env.STAFF_AUTH_EMAIL_DOMAIN?.trim()) || 'relay-staff.relaycoms'
   return `${clean}@${domain}`
 }
 
@@ -19,6 +19,6 @@ export function normalizeStaffUsername(raw: string): string {
 export function isSyntheticStaffAuthEmail(email: string): boolean {
   const lower = email.trim().toLowerCase()
   const domain =
-    (typeof process !== 'undefined' && process.env.STAFF_AUTH_EMAIL_DOMAIN?.trim()) || 'relay-staff.jbcoms'
+    (typeof process !== 'undefined' && process.env.STAFF_AUTH_EMAIL_DOMAIN?.trim()) || 'relay-staff.relaycoms'
   return lower.endsWith(`@${domain}`)
 }
